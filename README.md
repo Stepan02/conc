@@ -1,2 +1,2 @@
 # conc
-chroot based Linux container
+Lightweight Linux container in C
