@@ -357,31 +357,51 @@ int main(int argc, char *argv[]) {
 
     // default values
     int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
-    int ram_limit = 256;
-    int cpu_limit = 100000;
+    int ram_limit = 256; // mb
+    int cpu_limit = 100000; // us
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
 
-    // resolve shell mode, ram and cpu limits
+    // resolve arguments
     for (int i = 1; i < argc; i++) {
-        if (strcmp(argv[i], "--no-shell") == 0) {
+        if (strcmp(argv[i], "--no-shell") == 0 || strcmp(argv[i], "-nsh") == 0) {
             shell_mode = 0;
-        } else if (strcmp(argv[i], "--tar") == 0 && i + 1 < argc) {
-            snprintf(tarball_path, sizeof(tarball_path), "%s", argv[i + 1]);
-            i++;
-        } else if (strcmp(argv[i], "--ram") == 0 && i + 1 < argc) {
-            ram_limit = (int)strtol(argv[i + 1], NULL, 10);
-            i++;
-        } else if (strcmp(argv[i], "--cpu") == 0 && i + 1 < argc) {
-            cpu_limit = (int)strtol(argv[i + 1], NULL, 10);
-            i++;
-        } else if (strcmp(argv[i], "--hostname") == 0 && i + 1 < argc) {
-            strncpy(custom_hostname, argv[i + 1], sizeof(custom_hostname) - 1);
-            i++;
-        } else if (strcmp(argv[i], "--share-net") == 0) {
+        } else if (strcmp(argv[i], "--share-net") == 0 || strcmp(argv[i], "-sn") == 0) {
             share_net = 1;
-        } else if (script_path == NULL) {
-            script_path = argv[i];
+        } else if (strcmp(argv[i], "--tar") == 0 || strcmp(argv[i], "-t") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            snprintf(tarball_path, sizeof(tarball_path), "%s", argv[++i]);
+        } else if (strcmp(argv[i], "--ram") == 0 || strcmp(argv[i], "-r") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            ram_limit = (int) strtol(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--cpu") == 0 || strcmp(argv[i], "-c") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            cpu_limit = (int) strtol(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--hostname") == 0 || strcmp(argv[i], "-hn") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            snprintf(custom_hostname, sizeof(custom_hostname), "%s", argv[++i]);
+        } else if (argv[i][0] != '-') {
+            if (script_path == NULL) {
+                script_path = argv[i];
+            } else {
+                fprintf(stderr, "too many arguments: %s\n", argv[i]);
+                return 1;
+            }
+        } else {
+            fprintf(stderr, "unknown option: %s\n", argv[i]);
+            return 1;
         }
     }
 
