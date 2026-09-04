@@ -165,8 +165,20 @@ int create_fs(const char *tarball_path, const int pid) {
     char lower_directory[256];
     snprintf(lower_directory, sizeof(lower_directory), "/tmp/runner-%d/lower", pid);
 
+    char current_working_directory[1024];
+    if (getcwd(current_working_directory, sizeof(current_working_directory)) == NULL) {
+        perror("getcwd");
+        return -1;
+    }
+
     if (unzip_fs(tarball_path, lower_directory) == -1) {
         perror("unzip_fs");
+        chdir(current_working_directory);
+        return -1;
+    }
+
+    if (chdir(current_working_directory) != 0) {
+        perror("chdir back to cwd");
         return -1;
     }
 
@@ -257,41 +269,11 @@ int mount_fs() {
 }
 
 int unmount_fs(int pid) {
-    char merged_dir[256];
-    snprintf(merged_dir, sizeof(merged_dir), "/tmp/runner-%d/merged", pid);
+    snprintf(merged, sizeof(merged), "/tmp/runner-%d/merged", pid);
 
-    char path[256];
-    const char *submounts[] = {
-        "/dev/pts",
-        "/dev/shm",
-        "/dev/null",
-        "/dev/zero",
-        "/dev/random",
-        "/dev/urandom",
-        "/proc/sys/crypto/fips_enabled",
-        "/tmp",
-        "/proc"
-    };
-
-    for (size_t i = 0; i < sizeof(submounts) / sizeof(submounts[0]); i++) {
-        snprintf(path, sizeof(path), "%s%s", merged_dir, submounts[i]);
-
-        if (umount(path) == -1 && errno != ENOENT) {
-            perror("umount submount");
-        }
-    }
-
-    if (umount(merged_dir) == -1 && errno != ENOENT) {
-        perror("umount overlayfs merged root");
-    }
-
-    pid_t fpid = fork();
-    if (fpid == 0) {
-        execlp("fusermount3", "fusermount3", "-u", "-z", merged_dir, NULL);
-        execlp("fusermount", "fusermount", "-u", "-z", merged_dir, NULL);
-        _exit(0);
-    } else if (fpid > 0) {
-        waitpid(fpid, NULL, 0);
+    if (umount2(merged, MNT_DETACH) == -1) {
+        perror("umount merged");
+        return -1;
     }
 
     return 0;

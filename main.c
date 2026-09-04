@@ -57,12 +57,6 @@ int child_fn(void *arg) {
     int cpu_limit = args[2];
     int parent_pid = args[3];
 
-    // create rootfs
-    if (create_fs(tarball_path, parent_pid) != 0) {
-        fprintf(stderr, "create fs failed\n");
-        exit(1);
-    }
-
     // create cgroup
     create_resources(parent_pid, ram_limit, cpu_limit);
 
@@ -70,11 +64,6 @@ int child_fn(void *arg) {
     allocate_resources(parent_pid);
 
     setpgid(0, 0);
-
-    if (mount_overlayfs(parent_pid) == -1) {
-        fprintf(stderr, "failed to mount overlayfs\n");
-        return 1;
-    }
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -105,23 +94,32 @@ int child_fn(void *arg) {
         }
     }
 
+    snprintf(path, sizeof(path), "%s/dev", merged);
+    mkdir(path, 0755);
+
     for (int i = 0; i < 4; i++) {
         const char *sys_devs[] = {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"};
         snprintf(path, sizeof(path), "%s%s", merged, sys_devs[i]);
+
+        int fd = open(path, O_WRONLY | O_CREAT, 0666);
+        if (fd != -1) close(fd);
+
         if (mount(sys_devs[i], path, NULL, MS_BIND, NULL) == -1) {
             perror(sys_devs[i]);
         }
     }
 
-    snprintf(path, sizeof(path), "%s/dev/shm", merged);
+    snprintf(path, sizeof(path), "%s/dev/bashm", merged);
     mkdir(path, 0777);
+
     if (mount("tmpfs", path, "tmpfs", 0, "mode=1777") == -1) {
-        perror("mount /dev/shm");
+        perror("mount /dev/bashm");
     }
 
     snprintf(path, sizeof(path), "%s/dev/pts", merged);
     mkdir(path, 0755);
-    if (mount("devpts", path, "devpts", 0, "newinstance,ptmxmode=0666,mode=620") == -1) {
+
+    if (mount("devpts", path, "devpts", 0, "newinstance,mode=0620,ptmxmode=0666") == -1) {
         perror("mount devpts");
     }
 
@@ -155,6 +153,14 @@ int child_fn(void *arg) {
     // remove old root
     rmdir("/old_root");
 
+    unlink("/dev/ptmx");
+    if (symlink("/dev/pts/ptmx", "/dev/ptmx") == -1) {
+        perror("symlink /dev/ptmx");
+    }
+
+    chmod("/dev/ptmx", 0666);
+    chmod("/dev/pts", 0755);
+
     // setup network
     if (setup_loopback() != 0) {
         perror("setup lo");
@@ -183,32 +189,22 @@ int child_fn(void *arg) {
             _exit(1);
         }
 
-        // drop privileges
-        if (setgroups(0, NULL) == -1) {
-            perror("setgroups");
-            _exit(1);
-        }
-
-        if (setgid(gid) == -1) {
-            perror("setgid");
-            _exit(1);
-        }
-
-        if (setuid(uid) == -1) {
-            perror("setuid");
-            _exit(1);
-        }
-
-        // init syscall blacklist
-        if (setup_syscall_blacklist() != 0) {
-            perror("syscall blacklist");
-            _exit(1);
-        }
-
         // no shell mode
         if (shell_mode == 0) {
-            if (access("/bin/bash", X_OK) == -1) {
-                perror("bash not executable");
+            // drop privileges
+            if (setgroups(0, NULL) == -1 || setgid(gid) == -1 || setuid(uid) == -1) {
+                perror("setgroups");
+                _exit(1);
+            }
+
+            // init syscall blacklist
+            if (setup_syscall_blacklist() != 0) {
+                perror("syscall blacklist");
+                _exit(1);
+            }
+
+            if (access("/bin/sh", X_OK) == -1) {
+                perror("sh not executable");
                 _exit(1);
             }
 
@@ -226,16 +222,16 @@ int child_fn(void *arg) {
 
             // run script if provided
             if (script_path != NULL) {
-                execl("/bin/bash", "bash", script_path, (char *) NULL);
+                execl("/bin/sh", "sh", script_path, (char *) NULL);
             }
 
             // open shell if no script was provided
-            execl("/bin/bash", "bash", NULL);
+            execl("/bin/sh", "sh", NULL);
             perror("execl");
             _exit(1);
         } else {
             int master_fd;
-            fprintf(stderr, "launching bash\n");
+            fprintf(stderr, "launching sh\n");
             fflush(stderr);
 
             struct winsize w;
@@ -257,19 +253,31 @@ int child_fn(void *arg) {
             }
 
             if (shell_pid == 0) {
-                if (access("/bin/bash", X_OK) == -1) {
-                    perror("bash not executable");
+                // drop privileges
+                if (setgroups(0, NULL) == -1 || setgid(gid) == -1 || setuid(uid) == -1) {
+                    perror("drop privileges");
                     _exit(1);
                 }
 
-                fprintf(stderr, "exec bash\n");
+                // init syscall blacklist
+                if (setup_syscall_blacklist() != 0) {
+                    perror("syscall blacklist");
+                    _exit(1);
+                }
+
+                if (access("/bin/sh", X_OK) == -1) {
+                    perror("sh not executable");
+                    _exit(1);
+                }
+
+                fprintf(stderr, "exec sh\n");
 
                 // close descriptors
                 for (int fd = 3; fd < 1024; fd++) {
                     close(fd);
                 }
 
-                execl("/bin/bash", "bash", script_path, (char *) NULL);
+                execl("/bin/sh", "sh", script_path, (char *) NULL);
                 perror("execl");
                 _exit(1);
             }
@@ -328,7 +336,6 @@ int child_fn(void *arg) {
         int status;
         waitpid(pid, &status, 0);
 
-        unmount_fs(parent_pid);
         return 0;
     }
 }
@@ -426,7 +433,17 @@ int main(int argc, char *argv[]) {
         flags |= CLONE_NEWNET;
     }
 
-    int child_args[4] = { shell_mode, ram_limit, cpu_limit, parent_pid };
+    if (create_fs(tarball_path, parent_pid) != 0) {
+        fprintf(stderr, "create fs failed\n");
+        exit(1);
+    }
+
+    if (mount_overlayfs(parent_pid) == -1) {
+        fprintf(stderr, "failed to mount overlayfs\n");
+        exit(1);
+    }
+
+    int child_args[4] = {shell_mode, ram_limit, cpu_limit, parent_pid};
     pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
@@ -444,6 +461,8 @@ int main(int argc, char *argv[]) {
     cleanup_resources(parent_pid);
 
     printf("cleaning up overlayfs\n");
+
+    unmount_fs(parent_pid);
 
     char base_dir[256];
     snprintf(base_dir, sizeof(base_dir), "/tmp/runner-%d", parent_pid);
