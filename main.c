@@ -48,7 +48,7 @@ char tarball_path[1024];
 
 // setup child process stack and script path
 static char child_stack[STACK_SIZE];
-char *script_path = NULL;
+char **command = NULL;
 
 int child_fn(void *arg) {
     int *args = (int *) arg;
@@ -220,14 +220,8 @@ int child_fn(void *arg) {
                 close(fd);
             }
 
-            // run script if provided
-            if (script_path != NULL) {
-                execl("/bin/sh", "sh", script_path, (char *) NULL);
-            }
-
-            // open shell if no script was provided
-            execl("/bin/sh", "sh", NULL);
-            perror("execl");
+            execvp(command[0], command);
+            perror("execvp");
             _exit(1);
         } else {
             int master_fd;
@@ -277,8 +271,8 @@ int child_fn(void *arg) {
                     close(fd);
                 }
 
-                execl("/bin/sh", "sh", script_path, (char *) NULL);
-                perror("execl");
+                execvp(command[0], command);
+                perror("execvp");
                 _exit(1);
             }
 
@@ -400,16 +394,19 @@ int main(int argc, char *argv[]) {
             }
             snprintf(custom_hostname, sizeof(custom_hostname), "%s", argv[++i]);
         } else if (argv[i][0] != '-') {
-            if (script_path == NULL) {
-                script_path = argv[i];
-            } else {
-                fprintf(stderr, "too many arguments: %s\n", argv[i]);
-                return 1;
-            }
+            // parse container command
+            command = &argv[i];
+            break;
         } else {
             fprintf(stderr, "unknown option: %s\n", argv[i]);
             return 1;
         }
+    }
+
+    // /bin/sh fallback for empty commands
+    static char *default_command[] = {"/bin/sh", NULL};
+    if (command == NULL) {
+        command = default_command;
     }
 
     // tarball path is required
