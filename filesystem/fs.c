@@ -58,6 +58,54 @@ static int copy_data(struct archive *ar, struct archive *aw) {
     }
 }
 
+int copy_file(const char *src, int parent_pid) {
+    int source_fd = open(src, O_RDONLY);
+    if (source_fd == -1) {
+        perror("open src file");
+        return -1;
+    }
+
+    struct stat st;
+    if (fstat(source_fd, &st) < 0) {
+        close(source_fd);
+        return -1;
+    }
+
+    // get filename
+    const char *filename = strrchr(src, '/');
+    if (filename) {
+        filename++;
+    } else {
+        filename = src;
+    }
+
+    // copy file to merged layer
+    char target_path[256];
+    snprintf(target_path, sizeof(target_path), "/tmp/runner-%d/merged/%s", parent_pid, filename);
+
+    int destination_fd = open(target_path, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
+    if (destination_fd < 0) {
+        perror("open target path");
+        close(source_fd);
+        return -1;
+    }
+
+    char file_buffer[8192];
+    ssize_t bytes;
+    while ((bytes = read(source_fd, file_buffer, sizeof(file_buffer))) > 0) {
+        if (write(destination_fd, file_buffer, bytes) != bytes) {
+            perror("write file");
+            close(source_fd);
+            close(destination_fd);
+            return -1;
+        }
+    }
+
+    close(source_fd);
+    close(destination_fd);
+    return 0;
+}
+
 static int unzip_fs(const char *path, const char *destination) {
     struct archive_entry *entry;
 

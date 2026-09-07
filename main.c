@@ -362,6 +362,7 @@ int main(int argc, char *argv[]) {
     int cpu_limit = 100000; // us
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
+    char file_src[512] = ""; // file to copy buffer
 
     // resolve arguments
     for (int i = 1; i < argc; i++) {
@@ -393,6 +394,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             snprintf(custom_hostname, sizeof(custom_hostname), "%s", argv[++i]);
+        } else if (strcmp(argv[i], "--copy") == 0 || strcmp(argv[i], "-cp") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            snprintf(file_src, sizeof(file_src), "%s", argv[++i]);
         } else if (argv[i][0] != '-') {
             // parse container command
             command = &argv[i];
@@ -438,6 +445,15 @@ int main(int argc, char *argv[]) {
     if (mount_overlayfs(parent_pid) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
         exit(1);
+    }
+    
+    // copy file if provided
+    if (file_src[0] != '\0') {
+        if (copy_file(file_src, parent_pid) != 0) {
+            fprintf(stderr, "copy failed\n");
+            unmount_fs(parent_pid);
+            exit(1);
+        }
     }
 
     int child_args[4] = {shell_mode, ram_limit, cpu_limit, parent_pid};
