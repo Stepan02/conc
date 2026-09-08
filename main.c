@@ -362,7 +362,8 @@ int main(int argc, char *argv[]) {
     int cpu_limit = 100000; // us
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
-    char file_src[512] = ""; // file to copy buffer
+    char file_sources[10][512]; // files to copy buffer
+    int file_count = 0;
 
     // resolve arguments
     for (int i = 1; i < argc; i++) {
@@ -399,7 +400,11 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "missing argument for %s\n", argv[i]);
                 return 1;
             }
-            snprintf(file_src, sizeof(file_src), "%s", argv[++i]);
+            if (file_count >= 10) {
+                fprintf(stderr, "too many files (10 max)\n");
+                return 1;
+            }
+            snprintf(file_sources[file_count++], sizeof(file_sources[0]), "%s", argv[++i]);
         } else if (argv[i][0] != '-') {
             // parse container command
             command = &argv[i];
@@ -446,10 +451,10 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "failed to mount overlayfs\n");
         exit(1);
     }
-    
-    // copy file if provided
-    if (file_src[0] != '\0') {
-        if (copy_file(file_src, parent_pid) != 0) {
+
+    // copy files if provided
+    for (int i = 0; i < file_count; i++) {
+        if (copy_file(file_sources[i], parent_pid) != 0) {
             fprintf(stderr, "copy failed\n");
             unmount_fs(parent_pid);
             exit(1);
