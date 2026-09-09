@@ -200,7 +200,7 @@ static int unzip_fs(const char *path, const char *destination) {
     return 0;
 }
 
-int create_fs(const char *tarball_path, const int pid) {
+int create_fs(const char *tarball_path, const int pid, int disk_limit) {
     snprintf(base, sizeof(base), "/tmp/runner-%d", pid);
 
     // create base directory (/tmp/runner-<pid>)
@@ -209,9 +209,21 @@ int create_fs(const char *tarball_path, const int pid) {
         return -1;
     }
 
+    // set disk limit
+    char mount_options[64];
+    snprintf(mount_options, sizeof(mount_options), "size=%dM", disk_limit);
+    if (mount("tmpfs", base, "tmpfs", 0, mount_options) == -1) {
+        perror("mount tmpfs");
+        return -1;
+    }
+
     // set base to lowerdir (/tmp/runner-<pid>/lower)
     char lower_directory[256];
     snprintf(lower_directory, sizeof(lower_directory), "/tmp/runner-%d/lower", pid);
+    if (mkdir(lower_directory, 0755) == -1) {
+        perror("mkdir lowerdir");
+        return -1;
+    }
 
     char current_working_directory[1024];
     if (getcwd(current_working_directory, sizeof(current_working_directory)) == NULL) {
@@ -318,9 +330,17 @@ int mount_fs() {
 
 int unmount_fs(int pid) {
     snprintf(merged, sizeof(merged), "/tmp/runner-%d/merged", pid);
+    char base_directory[256];
+    snprintf(base_directory, sizeof(base_directory), "/tmp/runner-%d", pid);
 
+    // unmount merged directory
     if (umount2(merged, MNT_DETACH) == -1) {
         perror("umount merged");
+    }
+
+    // unmount tmpfs
+    if (umount2(base_directory, MNT_DETACH) == -1) {
+        perror("umount tmpfs");
         return -1;
     }
 

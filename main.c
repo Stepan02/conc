@@ -360,6 +360,7 @@ int main(int argc, char *argv[]) {
     int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
+    int disk_limit = 1024; // mb
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
     char file_sources[10][512]; // files to copy buffer
@@ -395,6 +396,12 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             snprintf(custom_hostname, sizeof(custom_hostname), "%s", argv[++i]);
+        } else if (strcmp(argv[i], "--disk") == 0 || strcmp(argv[i], "-d") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            disk_limit = (int) strtol(argv[++i], NULL, 10);
         } else if (strcmp(argv[i], "--copy") == 0 || strcmp(argv[i], "-cp") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "missing argument for %s\n", argv[i]);
@@ -442,7 +449,7 @@ int main(int argc, char *argv[]) {
         flags |= CLONE_NEWNET;
     }
 
-    if (create_fs(tarball_path, parent_pid) != 0) {
+    if (create_fs(tarball_path, parent_pid, disk_limit) != 0) {
         fprintf(stderr, "create fs failed\n");
         exit(1);
     }

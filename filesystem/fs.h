@@ -2,7 +2,7 @@
 #define SANDBOX_FS_H
 
 int copy_file(const char *src, int parent_pid);
-int create_fs(const char *tarball_path, int pid);
+int create_fs(const char *tarball_path, int pid, int disk_limit);
 int remove_directory(const char *path);
 int mount_overlayfs(int pid);
 int mount_fs();
