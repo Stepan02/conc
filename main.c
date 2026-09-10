@@ -79,9 +79,6 @@ int child_fn(void *arg) {
 
     snprintf(path, sizeof(path), "%s/tmp", merged);
     mkdir(path, 0777);
-    if (mount("tmpfs", path, "tmpfs", 0, "mode=1777") == -1) {
-        perror("mount /tmp");
-    }
 
     char fips_path[256];
     snprintf(fips_path, sizeof(fips_path), "%s/proc/sys/crypto/fips_enabled", merged);
@@ -111,10 +108,6 @@ int child_fn(void *arg) {
 
     snprintf(path, sizeof(path), "%s/dev/bashm", merged);
     mkdir(path, 0777);
-
-    if (mount("tmpfs", path, "tmpfs", 0, "mode=1777") == -1) {
-        perror("mount /dev/bashm");
-    }
 
     snprintf(path, sizeof(path), "%s/dev/pts", merged);
     mkdir(path, 0755);
