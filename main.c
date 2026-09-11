@@ -38,7 +38,6 @@
 // global uid, uid and home values
 uid_t uid = 0;
 gid_t gid = 0;
-char home_dir[256] = "/home/runner";
 
 // global hostname variable
 char hostname[64];
@@ -173,8 +172,8 @@ int child_fn(void *arg) {
         }
 
         setenv("TERM", "xterm-256color", 1);
-        setenv("HOME", home_dir, 1);
-        setenv("USER", "runner", 1);
+        setenv("HOME", "/root", 1);
+        setenv("USER", "root", 1);
         setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin", 1);
 
         if (setsid() == -1) {
@@ -337,17 +336,6 @@ int main(int argc, char *argv[]) {
     } else {
         perror("fopen /sys/fs/cgroup/init/cgroup.procs");
     }
-
-    // get uid and gid of runner user
-    struct passwd *pw = getpwnam("runner");
-    if (pw == NULL) {
-        fprintf(stderr, "runner user does not exist\n");
-        exit(1);
-    }
-
-    uid = pw->pw_uid;
-    gid = pw->pw_gid;
-    strncpy(home_dir, pw->pw_dir, sizeof(home_dir) - 1);
 
     // default values
     int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)

@@ -37,9 +37,6 @@ RUN curl -L https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-m
 # download example ubuntu rootfs tarball
 RUN curl -L https://cdimage.ubuntu.com/ubuntu-base/jammy/daily/current/jammy-base-amd64.tar.gz -o /opt/ubuntu.tar.gz
 
-# create runner user
-RUN useradd -ms /bin/sh runner
-
 # add compiled runner
 COPY --from=builder /build/runner /usr/bin/runner
 CMD ["/bin/bash"]
