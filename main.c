@@ -5,7 +5,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/ioctl.h>
-#include <sys/syscall.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
@@ -14,30 +13,12 @@
 #include <pty.h>
 #include <string.h>
 #include <termios.h>
-#include <pwd.h>
 #include <grp.h>
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
 #include "sandbox/security.h"
 #include "sandbox/network.h"
-
-#define STACK_SIZE (1024 * 1024)
-#define MKDIR_OR_FAIL(path, mode) do { \
-    if (mkdir(path, mode) == -1) { \
-        if (errno != EEXIST) { \
-            perror("mkdir " #path); \
-            return -1; \
-        } else { \
-            printf("mkdir %s: already exists\n", path); \
-        } \
-    } else { \
-        printf("mkdir %s: created\n", path); \
-    } \
-} while(0)
-
-// global uid, uid and home values
-uid_t uid = 0;
-gid_t gid = 0;
+#include "sandbox/user.h"
 
 // global hostname variable
 char hostname[64];
@@ -45,24 +26,53 @@ char hostname[64];
 // global tarball path variable
 char tarball_path[1024];
 
-// setup child process stack and script path
+// global disk_limit variable
+int disk_limit = 1024; // mb
+
+// global files to copy buffers
+char file_sources[10][512];
+int file_count = 0;
+
+// setup child process stack and command variable
+#define STACK_SIZE (1024 * 1024)
 static char child_stack[STACK_SIZE];
 char **command = NULL;
 
 int child_fn(void *arg) {
-    int *args = (int *) arg;
+    int *args = arg;
     int shell_mode = args[0];
     int ram_limit = args[1];
     int cpu_limit = args[2];
     int parent_pid = args[3];
+    int sync_read_fd = args[4];
+
+    char sync_pipe;
+    read(sync_read_fd, &sync_pipe, 1);
+    close(sync_read_fd);
 
     // create cgroup
-    create_resources(parent_pid, ram_limit, cpu_limit);
+    // create_resources(parent_pid, ram_limit, cpu_limit);
 
     // assign process to cgroup
-    allocate_resources(parent_pid);
+    // allocate_resources(parent_pid);
 
-    setpgid(0, 0);
+    if (create_fs(tarball_path, parent_pid, disk_limit) != 0) {
+        fprintf(stderr, "create fs failed\n");
+        exit(1);
+    }
+
+    if (mount_overlayfs(parent_pid) == -1) {
+        fprintf(stderr, "failed to mount overlayfs\n");
+        exit(1);
+    }
+
+    // copy files if provided
+    for (int i = 0; i < file_count; i++) {
+        if (copy_file(file_sources[i], parent_pid) != 0) {
+            fprintf(stderr, "copy failed\n");
+            exit(1);
+        }
+    }
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -93,8 +103,8 @@ int child_fn(void *arg) {
     snprintf(path, sizeof(path), "%s/dev", merged);
     mkdir(path, 0755);
 
-    for (int i = 0; i < 4; i++) {
-        const char *sys_devs[] = {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom"};
+    for (int i = 0; i < 5; i++) {
+        const char *sys_devs[] = {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"};
         snprintf(path, sizeof(path), "%s%s", merged, sys_devs[i]);
 
         int fd = open(path, O_WRONLY | O_CREAT, 0666);
@@ -115,10 +125,12 @@ int child_fn(void *arg) {
         perror("mount devpts");
     }
 
+    /*
     // save old root
     char put_old[256];
     snprintf(put_old, sizeof(put_old), "%s/old_root", merged);
     mkdir(put_old, 0700);
+    */
 
     // check merged mountpoint
     if (mount(merged, merged, NULL, MS_BIND | MS_REC, NULL) == -1) {
@@ -127,6 +139,22 @@ int child_fn(void *arg) {
     }
 
     // change root
+    if (chdir(merged) == -1) {
+        perror("chdir merged");
+        return 1;
+    }
+
+    if (chroot(merged) == -1) {
+        perror("chroot");
+        return 1;
+    }
+
+    if (chdir("/") == -1) {
+        perror("chdir /");
+        return 1;
+    }
+
+    /*
     if (syscall(SYS_pivot_root, merged, put_old) == -1) {
         perror("pivot_root");
         return 1;
@@ -143,7 +171,10 @@ int child_fn(void *arg) {
     }
 
     // remove old root
-    rmdir("/old_root");
+    if (rmdir("/old_root") == -1) {
+        perror("rmdir /old_root");
+    }
+    */
 
     unlink("/dev/ptmx");
     if (symlink("/dev/pts/ptmx", "/dev/ptmx") == -1) {
@@ -159,174 +190,141 @@ int child_fn(void *arg) {
         return 1;
     }
 
-    pid_t pid = fork();
-    if (pid == -1) {
-        perror("fork");
-        return 1;
+    // setup hostname and env variables
+    if (sethostname(hostname, strlen(hostname)) == -1) {
+        perror("hostname");
     }
 
-    if (pid == 0) {
-        // setup hostname and env variables
-        if (sethostname(hostname, strlen(hostname)) == -1) {
-            perror("hostname");
-        }
+    setenv("TERM", "xterm-256color", 1);
+    setenv("HOME", "/root", 1);
+    setenv("USER", "root", 1);
+    setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin", 1);
 
-        setenv("TERM", "xterm-256color", 1);
-        setenv("HOME", "/root", 1);
-        setenv("USER", "root", 1);
-        setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin", 1);
-
-        if (setsid() == -1) {
-            perror("setsid");
+    // no shell mode
+    if (shell_mode == 0) {
+        // init syscall blacklist
+        if (setup_syscall_blacklist() != 0) {
+            perror("syscall blacklist");
             _exit(1);
         }
 
-        // no shell mode
-        if (shell_mode == 0) {
-            // drop privileges
-            if (setgroups(0, NULL) == -1 || setgid(gid) == -1 || setuid(uid) == -1) {
-                perror("setgroups");
-                _exit(1);
-            }
+        if (access("/bin/sh", X_OK) == -1) {
+            perror("sh not executable");
+            _exit(1);
+        }
 
+        // disable stdin
+        int null_fd = open("/dev/null", O_RDONLY);
+        if (null_fd != -1) {
+            dup2(null_fd, STDIN_FILENO);
+            close(null_fd);
+        }
+
+        // close descriptors
+        for (int fd = 3; fd < 1024; fd++) {
+            close(fd);
+        }
+
+        execvp(command[0], command);
+        perror("execvp");
+        _exit(1);
+    } else {
+        // shell mode
+        int master_fd;
+        fprintf(stderr, "launching sh\n");
+        fflush(stderr);
+
+        struct winsize w;
+        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &w) == -1) {
+            w.ws_row = 24;
+            w.ws_col = 80;
+        }
+
+        pid_t shell_pid = forkpty(&master_fd, NULL, NULL, &w);
+
+        if (shell_pid == -1) {
+            perror("forkpty");
+            _exit(1);
+        }
+
+        if (master_fd < 0) {
+            fprintf(stderr, "forkpty returned invalid master_fd\n");
+            _exit(1);
+        }
+
+        if (shell_pid == 0) {
             // init syscall blacklist
             if (setup_syscall_blacklist() != 0) {
-                perror("syscall blacklist");
+                dprintf(2, "syscall blacklist");
                 _exit(1);
             }
 
-            if (access("/bin/sh", X_OK) == -1) {
-                perror("sh not executable");
+            if (access(command[0], X_OK) == -1) {
+                dprintf(2, "%s not executable", command[0]);
                 _exit(1);
-            }
-
-            // disable stdin
-            int null_fd = open("/dev/null", O_RDONLY);
-            if (null_fd != -1) {
-                dup2(null_fd, STDIN_FILENO);
-                close(null_fd);
-            }
-
-            // close descriptors
-            for (int fd = 3; fd < 1024; fd++) {
-                close(fd);
             }
 
             execvp(command[0], command);
             perror("execvp");
             _exit(1);
-        } else {
-            int master_fd;
-            fprintf(stderr, "launching sh\n");
-            fflush(stderr);
-
-            struct winsize w;
-            if (ioctl(STDIN_FILENO, TIOCGWINSZ, &w) == -1) {
-                w.ws_row = 24;
-                w.ws_col = 80;
-            }
-
-            pid_t shell_pid = forkpty(&master_fd, NULL, NULL, &w);
-
-            if (shell_pid == -1) {
-                perror("forkpty");
-                _exit(1);
-            }
-
-            if (master_fd < 0) {
-                fprintf(stderr, "forkpty returned invalid master_fd\n");
-                _exit(1);
-            }
-
-            if (shell_pid == 0) {
-                // drop privileges
-                if (setgroups(0, NULL) == -1 || setgid(gid) == -1 || setuid(uid) == -1) {
-                    perror("drop privileges");
-                    _exit(1);
-                }
-
-                // init syscall blacklist
-                if (setup_syscall_blacklist() != 0) {
-                    perror("syscall blacklist");
-                    _exit(1);
-                }
-
-                if (access("/bin/sh", X_OK) == -1) {
-                    perror("sh not executable");
-                    _exit(1);
-                }
-
-                fprintf(stderr, "exec sh\n");
-
-                // close descriptors
-                for (int fd = 3; fd < 1024; fd++) {
-                    close(fd);
-                }
-
-                execvp(command[0], command);
-                perror("execvp");
-                _exit(1);
-            }
-
-            struct termios orig_termios, raw;
-            int is_tty = isatty(STDIN_FILENO);
-
-            if (is_tty) {
-                tcgetattr(STDIN_FILENO, &orig_termios);
-                raw = orig_termios;
-                cfmakeraw(&raw);
-                tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-            }
-
-            fd_set fds;
-            char buf[256];
-            int maxfd = (master_fd > STDIN_FILENO) ? master_fd : STDIN_FILENO;
-            ssize_t n;
-
-            while (1) {
-                FD_ZERO(&fds);
-                FD_SET(STDIN_FILENO, &fds);
-                FD_SET(master_fd, &fds);
-
-                if (select(maxfd + 1, &fds, NULL, NULL, NULL) == -1) {
-                    perror("select");
-                    break;
-                }
-
-                if (FD_ISSET(STDIN_FILENO, &fds)) {
-                    n = read(STDIN_FILENO, buf, sizeof(buf));
-                    if (n <= 0) break;
-
-                    if (write(master_fd, buf, n) != n) break;
-                }
-
-                if (FD_ISSET(master_fd, &fds)) {
-                    n = read(master_fd, buf, sizeof(buf));
-                    if (n <= 0) break;
-
-                    if (write(STDOUT_FILENO, buf, n) != n) break;
-                }
-            }
-
-            if (is_tty) {
-                tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
-            }
-
-            int status;
-            waitpid(shell_pid, &status, 0);
-            close(master_fd);
         }
 
-        _exit(0);
-    } else {
-        int status;
-        waitpid(pid, &status, 0);
+        struct termios orig_termios, raw;
+        int is_tty = isatty(STDIN_FILENO);
 
-        return 0;
+        if (is_tty) {
+            tcgetattr(STDIN_FILENO, &orig_termios);
+            raw = orig_termios;
+            cfmakeraw(&raw);
+            tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        }
+
+        fd_set fds;
+        char buf[256];
+        int maxfd = (master_fd > STDIN_FILENO) ? master_fd : STDIN_FILENO;
+        ssize_t n;
+
+        while (1) {
+            FD_ZERO(&fds);
+            FD_SET(STDIN_FILENO, &fds);
+            FD_SET(master_fd, &fds);
+
+            if (select(maxfd + 1, &fds, NULL, NULL, NULL) == -1) {
+                if (errno == EINTR) continue;
+
+                perror("select");
+                break;
+            }
+
+            if (FD_ISSET(STDIN_FILENO, &fds)) {
+                n = read(STDIN_FILENO, buf, sizeof(buf));
+                if (n <= 0) break;
+
+                if (write(master_fd, buf, n) != n) break;
+            }
+
+            if (FD_ISSET(master_fd, &fds)) {
+                n = read(master_fd, buf, sizeof(buf));
+                if (n <= 0) break;
+
+                if (write(STDOUT_FILENO, buf, n) != n) break;
+            }
+        }
+
+        if (is_tty) {
+            tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+        }
+
+        int status;
+        waitpid(shell_pid, &status, 0);
+        close(master_fd);
     }
+
+    return 0;
 }
 
 int main(int argc, char *argv[]) {
+    /*
     // init root cgroup
     mkdir("/sys/fs/cgroup/init", 0755);
     FILE *f_init = fopen("/sys/fs/cgroup/init/cgroup.procs", "w");
@@ -336,16 +334,14 @@ int main(int argc, char *argv[]) {
     } else {
         perror("fopen /sys/fs/cgroup/init/cgroup.procs");
     }
+    */
 
     // default values
     int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
-    int disk_limit = 1024; // mb
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
-    char file_sources[10][512]; // files to copy buffer
-    int file_count = 0;
 
     // resolve arguments
     for (int i = 1; i < argc; i++) {
@@ -424,38 +420,36 @@ int main(int argc, char *argv[]) {
         snprintf(hostname, sizeof(hostname), "runner-%d", parent_pid);
     }
 
-    int flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWCGROUP;
+    int flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWCGROUP | CLONE_NEWUSER;
 
     if (!share_net) {
         flags |= CLONE_NEWNET;
     }
 
-    if (create_fs(tarball_path, parent_pid, disk_limit) != 0) {
-        fprintf(stderr, "create fs failed\n");
+    int sync_pipe[2];
+    if (pipe(sync_pipe) == -1) {
+        perror("pipe");
         exit(1);
     }
 
-    if (mount_overlayfs(parent_pid) == -1) {
-        fprintf(stderr, "failed to mount overlayfs\n");
-        exit(1);
-    }
-
-    // copy files if provided
-    for (int i = 0; i < file_count; i++) {
-        if (copy_file(file_sources[i], parent_pid) != 0) {
-            fprintf(stderr, "copy failed\n");
-            unmount_fs(parent_pid);
-            exit(1);
-        }
-    }
-
-    int child_args[4] = {shell_mode, ram_limit, cpu_limit, parent_pid};
+    int child_args[5] = {shell_mode, ram_limit, cpu_limit, parent_pid, sync_pipe[0]};
     pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
         perror("clone");
         exit(1);
     }
+
+    close(sync_pipe[0]);
+
+    // map namespace
+    if (map_user(child_pid) != 0) {
+        perror("map_user");
+        exit(1);
+    }
+
+    write(sync_pipe[1], "1", 1);
+    close(sync_pipe[1]);
 
     waitpid(child_pid, NULL, 0);
 
@@ -465,10 +459,6 @@ int main(int argc, char *argv[]) {
     printf("cleaning up resources\n");
 
     cleanup_resources(parent_pid);
-
-    printf("cleaning up overlayfs\n");
-
-    unmount_fs(parent_pid);
 
     char base_dir[256];
     snprintf(base_dir, sizeof(base_dir), "/tmp/runner-%d", parent_pid);

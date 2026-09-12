@@ -37,7 +37,7 @@ static int copy_data(struct archive *ar, struct archive *aw) {
     size_t size;
     la_int64_t offset;
 
-    for (;;) {
+    while (1) {
         int reader = archive_read_data_block(ar, &buffer, &size, &offset);
 
         if (reader == ARCHIVE_EOF) {
@@ -130,7 +130,7 @@ static int unzip_fs(const char *path, const char *destination) {
 
     // select attributes to unzip
     const int flags = ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM | ARCHIVE_EXTRACT_ACL | ARCHIVE_EXTRACT_FFLAGS | ARCHIVE_EXTRACT_SECURE_NODOTDOT |
-                      ARCHIVE_EXTRACT_OWNER | ARCHIVE_EXTRACT_UNLINK | ARCHIVE_EXTRACT_XATTR;
+                      ARCHIVE_EXTRACT_UNLINK | ARCHIVE_EXTRACT_XATTR;
 
     // setup tarball
     struct archive *tarball = archive_read_new();

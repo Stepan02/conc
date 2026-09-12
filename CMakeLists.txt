@@ -11,4 +11,6 @@ add_executable(runner main.c
         sandbox/security.h
         sandbox/security.c
         sandbox/network.h
-        sandbox/network.c)
+        sandbox/network.c
+        sandbox/user.h
+        sandbox/user.c)

@@ -16,6 +16,7 @@ RUN gcc -O3 main.c  \
     sandbox/resources.c  \
     sandbox/security.c  \
     sandbox/network.c \
+    sandbox/user.c \
     -o runner  \
     -lseccomp \
     -larchive
@@ -29,6 +30,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libarchive13 \
     curl \
     ca-certificates \
+    tar \
     && rm -rf /var/lib/apt/lists/*
 
 # download example alpine rootfs tarball
@@ -36,6 +38,9 @@ RUN curl -L https://dl-cdn.alpinelinux.org/alpine/v3.20/releases/x86_64/alpine-m
 
 # download example ubuntu rootfs tarball
 RUN curl -L https://cdimage.ubuntu.com/ubuntu-base/jammy/daily/current/jammy-base-amd64.tar.gz -o /opt/ubuntu.tar.gz
+
+# create runner user
+RUN useradd -ms /bin/bash runner
 
 # add compiled runner
 COPY --from=builder /build/runner /usr/bin/runner

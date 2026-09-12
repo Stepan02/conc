@@ -11,7 +11,7 @@ int setup_syscall_blacklist(void) {
     }
 
     // blocked syscalls list
-    int syscall_blacklist[] = {
+    const int syscall_blacklist[] = {
         SCMP_SYS(reboot),
         SCMP_SYS(swapon),
         SCMP_SYS(swapoff),
@@ -56,7 +56,7 @@ int setup_syscall_blacklist(void) {
 
     // disallow elevating privileges
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        perror("PR_SET_NO_NEW_PRIVS failed");
+        perror("PR_SET_NO_NEW_PRIVS");
         return -1;
     }
 
