@@ -41,13 +41,17 @@ char **command = NULL;
 int child_fn(void *arg) {
     int *args = arg;
     int shell_mode = args[0];
-    int ram_limit = args[1];
-    int cpu_limit = args[2];
-    int parent_pid = args[3];
-    int sync_read_fd = args[4];
+    int share_net = args[1];
+    int ram_limit = args[2];
+    int cpu_limit = args[3];
+    int parent_pid = args[4];
+    int sync_read_fd = args[5];
 
     char sync_pipe;
-    read(sync_read_fd, &sync_pipe, 1);
+    if (read(sync_read_fd, &sync_pipe, 1) != 1) {
+        fprintf(stderr, "child_fn sync_pipe");
+        _exit(1);
+    }
     close(sync_read_fd);
 
     // create cgroup
@@ -184,10 +188,12 @@ int child_fn(void *arg) {
     chmod("/dev/ptmx", 0666);
     chmod("/dev/pts", 0755);
 
-    // setup network
-    if (setup_loopback() != 0) {
-        perror("setup lo");
-        return 1;
+    // setup loopback if network is isolated
+    if (!share_net) {
+        if (setup_loopback() != 0) {
+            perror("setup lo");
+            return 1;
+        }
     }
 
     // setup hostname and env variables
@@ -262,6 +268,11 @@ int child_fn(void *arg) {
             if (access(command[0], X_OK) == -1) {
                 dprintf(2, "%s not executable", command[0]);
                 _exit(1);
+            }
+
+            // close descriptors
+            for (int fd = 3; fd < 1024; fd++) {
+                close(fd);
             }
 
             execvp(command[0], command);
@@ -432,7 +443,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    int child_args[5] = {shell_mode, ram_limit, cpu_limit, parent_pid, sync_pipe[0]};
+    int child_args[6] = {shell_mode, share_net, ram_limit, cpu_limit, parent_pid, sync_pipe[0]};
     pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
@@ -445,6 +456,7 @@ int main(int argc, char *argv[]) {
     // map namespace
     if (map_user(child_pid) != 0) {
         perror("map_user");
+        close(sync_pipe[1]);
         exit(1);
     }
 
