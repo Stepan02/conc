@@ -1,7 +1,8 @@
-cmake_minimum_required(VERSION 3.28)
+cmake_minimum_required(VERSION 3.22)
 project(runner C)
 
 set(CMAKE_C_STANDARD 11)
+set(CMAKE_C_STANDARD_REQUIRED ON)
 
 add_executable(runner main.c
         filesystem/fs.h
@@ -14,3 +15,7 @@ add_executable(runner main.c
         sandbox/network.c
         sandbox/user.h
         sandbox/user.c)
+
+target_include_directories(runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(runner PRIVATE seccomp archive)

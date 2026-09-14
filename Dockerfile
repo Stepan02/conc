@@ -2,6 +2,7 @@ FROM ubuntu:22.04 AS builder
 
 # download dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    cmake \
     build-essential \
     libseccomp-dev \
     libarchive-dev \
@@ -11,15 +12,8 @@ WORKDIR /build
 COPY . /build
 
 # compile runner
-RUN gcc -O3 main.c  \
-    filesystem/fs.c  \
-    sandbox/resources.c  \
-    sandbox/security.c  \
-    sandbox/network.c \
-    sandbox/user.c \
-    -o runner  \
-    -lseccomp \
-    -larchive
+RUN cmake -B . -DCMAKE_BUILD_TYPE=Release && \
+    cmake --build . -j$(nproc)
 
 FROM ubuntu:22.04
 
