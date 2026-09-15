@@ -33,6 +33,10 @@ int disk_limit = 1024; // mb
 char file_sources[10][512];
 int file_count = 0;
 
+// global env variables
+char **env_variables = NULL;
+int env_variables_count = 0;
+
 // setup child process stack and command variable
 #define STACK_SIZE (1024 * 1024)
 static char child_stack[STACK_SIZE];
@@ -201,10 +205,17 @@ int child_fn(void *arg) {
         perror("hostname");
     }
 
+    // set environment variables
+    clearenv();
+
     setenv("TERM", "xterm-256color", 1);
     setenv("HOME", "/root", 1);
     setenv("USER", "root", 1);
     setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin", 1);
+
+    for (int i = 0; i < env_variables_count; i++) {
+        putenv(env_variables[i]);
+    }
 
     // no shell mode
     if (shell_mode == 0) {
@@ -390,6 +401,13 @@ int main(int argc, char *argv[]) {
                 return 1;
             }
             disk_limit = (int) strtol(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--env") == 0 || strcmp(argv[i], "-e") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+            env_variables = realloc(env_variables, (env_variables_count + 1) * sizeof(char *));
+            env_variables[env_variables_count++] = argv[++i];
         } else if (strcmp(argv[i], "--copy") == 0 || strcmp(argv[i], "-cp") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "missing argument for %s\n", argv[i]);
@@ -471,6 +489,7 @@ int main(int argc, char *argv[]) {
     printf("cleaning up resources\n");
 
     cleanup_resources(parent_pid);
+    free(env_variables);
 
     char base_dir[256];
     snprintf(base_dir, sizeof(base_dir), "/tmp/runner-%d", parent_pid);
