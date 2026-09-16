@@ -14,11 +14,13 @@
 #include <string.h>
 #include <termios.h>
 #include <grp.h>
+#include <sys/socket.h>
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
 #include "sandbox/security.h"
 #include "sandbox/network.h"
 #include "sandbox/user.h"
+#include "sandbox/ipc.h"
 
 // global hostname variable
 char hostname[64];
@@ -49,14 +51,13 @@ int child_fn(void *arg) {
     int ram_limit = args[2];
     int cpu_limit = args[3];
     int parent_pid = args[4];
-    int sync_read_fd = args[5];
+    int sync_sock = args[5];
 
     char sync_pipe;
-    if (read(sync_read_fd, &sync_pipe, 1) != 1) {
+    if (read(sync_sock, &sync_pipe, 1) != 1) {
         fprintf(stderr, "child_fn sync_pipe");
         _exit(1);
     }
-    close(sync_read_fd);
 
     // create cgroup
     // create_resources(parent_pid, ram_limit, cpu_limit);
@@ -220,10 +221,19 @@ int child_fn(void *arg) {
     // no shell mode
     if (shell_mode == 0) {
         // init syscall blacklist
-        if (setup_syscall_blacklist() != 0) {
+        int notify_fd = setup_syscall_blacklist();
+        if (notify_fd < 0) {
             perror("syscall blacklist");
             _exit(1);
         }
+
+        if (send_fd(sync_sock, notify_fd) < 0) {
+            perror("send_fd");
+            _exit(1);
+        }
+
+        close(notify_fd);
+        close(sync_sock);
 
         if (access("/bin/sh", X_OK) == -1) {
             perror("sh not executable");
@@ -271,10 +281,19 @@ int child_fn(void *arg) {
 
         if (shell_pid == 0) {
             // init syscall blacklist
-            if (setup_syscall_blacklist() != 0) {
-                dprintf(2, "syscall blacklist");
+            int notify_fd = setup_syscall_blacklist();
+            if (notify_fd < 0) {
+                perror("syscall blacklist");
                 _exit(1);
             }
+
+            if (send_fd(sync_sock, notify_fd) < 0) {
+                perror("send_fd");
+                _exit(1);
+            }
+
+            close(notify_fd);
+            close(sync_sock);
 
             if (access(command[0], X_OK) == -1) {
                 dprintf(2, "%s not executable", command[0]);
@@ -290,6 +309,8 @@ int child_fn(void *arg) {
             perror("execvp");
             _exit(1);
         }
+
+        close(sync_sock);
 
         struct termios orig_termios, raw;
         int is_tty = isatty(STDIN_FILENO);
@@ -455,13 +476,13 @@ int main(int argc, char *argv[]) {
         flags |= CLONE_NEWNET;
     }
 
-    int sync_pipe[2];
-    if (pipe(sync_pipe) == -1) {
-        perror("pipe");
-        exit(1);
+    int sync_sockets[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, sync_sockets) < 0) {
+        perror("socketpair");
+        return 1;
     }
 
-    int child_args[6] = {shell_mode, share_net, ram_limit, cpu_limit, parent_pid, sync_pipe[0]};
+    int child_args[6] = {shell_mode, share_net, ram_limit, cpu_limit, parent_pid, sync_sockets[1]};
     pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
@@ -469,21 +490,28 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    close(sync_pipe[0]);
+    close(sync_sockets[1]);
 
     // map namespace
     if (map_user(child_pid) != 0) {
         perror("map_user");
-        close(sync_pipe[1]);
+        close(sync_sockets[0]);
         exit(1);
     }
+    if (write(sync_sockets[0], "1", 1) != 1) {
+        perror("write sync_sockets");
+        return 1;
+    }
 
-    write(sync_pipe[1], "1", 1);
-    close(sync_pipe[1]);
+    // listen to child notifications for syscalls
+    int notify_fd = recv_fd(sync_sockets[0]);
+    if (notify_fd < 0) {
+        fprintf(stderr, "receive notify_fd\n");
+        return 1;
+    }
 
-    waitpid(child_pid, NULL, 0);
-
-    sleep(2);
+    // handle syscalls
+    syscall_handler(notify_fd, child_pid);
 
     printf("\n");
     printf("cleaning up resources\n");

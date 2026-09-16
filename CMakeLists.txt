@@ -14,7 +14,9 @@ add_executable(runner main.c
         sandbox/network.h
         sandbox/network.c
         sandbox/user.h
-        sandbox/user.c)
+        sandbox/user.c
+        sandbox/ipc.c
+        sandbox/ipc.h)
 
 target_include_directories(runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
