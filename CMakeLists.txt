@@ -18,6 +18,9 @@ add_executable(runner main.c
         sandbox/ipc.c
         sandbox/ipc.h)
 
-target_include_directories(runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(SYSTEMD REQUIRED libsystemd)
 
-target_link_libraries(runner PRIVATE seccomp archive)
+target_include_directories(runner PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${SYSTEMD_INCLUDE_DIRS})
+
+target_link_libraries(runner PRIVATE seccomp archive ${SYSTEMD_LIBRARIES})

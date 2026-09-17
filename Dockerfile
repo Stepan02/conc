@@ -6,6 +6,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libseccomp-dev \
     libarchive-dev \
+    libsystemd-dev \
+    pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /build
@@ -22,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fuse-overlayfs \
     libseccomp2 \
     libarchive13 \
+    systemd \
     curl \
     ca-certificates \
     tar \
@@ -38,4 +41,9 @@ RUN useradd -ms /bin/bash runner
 
 # add compiled runner
 COPY --from=builder /build/runner /usr/bin/runner
+
+# switch to runner user
+USER runner
+WORKDIR /home/runner
+
 CMD ["/bin/bash"]

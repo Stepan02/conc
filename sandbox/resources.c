@@ -1,89 +1,106 @@
-#include "resources.h"
+#include <sched.h>
+#include <systemd/sd-bus.h>
 #include <stdio.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/sysmacros.h>
-#include <errno.h>
+#include <stdint.h>
+#include <string.h>
 
-static int write_file(const char *path, const char *value) {
-    FILE *f = fopen(path, "w");
-    if (!f) {
-        perror(path);
-        return -1;
-    }
-    if (fprintf(f, "%s\n", value) < 0 || fflush(f) != 0) {
-        perror(path);
-        fclose(f);
-        return -1;
-    }
-    fclose(f);
-    return 0;
-}
+int allocate_resources(pid_t child_pid, int ram_mb, uint64_t cpu_us) {
+    sd_bus *bus = NULL;
+    sd_bus_message *m = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
 
-void create_resources(pid_t sandbox_id, int ram_mb, int cpu_us) {
-    // allow cgroup controller
-    write_file("/sys/fs/cgroup/cgroup.subtree_control", "+memory +cpu +pids +io");
-
-    // create cgroup directory
-    char cgroup_path[256];
-    snprintf(cgroup_path, sizeof(cgroup_path), "/sys/fs/cgroup/sandbox_%d", sandbox_id);
-
-    if (mkdir(cgroup_path, 0755) == -1 && errno != EEXIST) {
-        perror("mkdir cgroup");
-        return;
+    // connect to dbus
+    int r = sd_bus_default_user(&bus);
+    if (r < 0) {
+        fprintf(stderr, "d-bus: %s\n", strerror(-r));
+        return r;
     }
 
-    char file_path[512];
-    char val_buf[64];
+    char scope_name[64];
+    snprintf(scope_name, sizeof(scope_name), "sandbox-%d.scope", child_pid);
+
+    // setup message
+    r = sd_bus_message_new_method_call(bus, &m,"org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        "StartTransientUnit");
+    if (r < 0) {
+        sd_bus_error_free(&error);
+        sd_bus_message_unref(m);
+        sd_bus_unref(bus);
+
+        return r;
+    }
+
+    // set scope to fail
+    sd_bus_message_append(m, "ss", scope_name, "fail");
+
+    // set properties
+    sd_bus_message_open_container(m, 'a', "(sv)");
+
+    // set pid limit
+    sd_bus_message_open_container(m, 'r', "sv");
+    sd_bus_message_append(m, "s", "PIDs");
+
+    sd_bus_message_open_container(m, 'v', "au");
+    sd_bus_message_open_container(m, 'a', "u");
+    uint32_t pid = (uint32_t) child_pid;
+    sd_bus_message_append(m, "u", pid);
+    sd_bus_message_close_container(m);
+    sd_bus_message_close_container(m);
+    sd_bus_message_close_container(m);
 
     // set ram limit
-    snprintf(file_path, sizeof(file_path), "%s/memory.max", cgroup_path);
-    snprintf(val_buf, sizeof(val_buf), "%lld", (long long)ram_mb * 1024 * 1024);
-    write_file(file_path, val_buf);
+    uint64_t memory_bytes = (uint64_t) ram_mb * 1024 * 1024;
+    sd_bus_message_open_container(m, 'r', "sv");
+    sd_bus_message_append(m, "s", "MemoryMax");
+    sd_bus_message_open_container(m, 'v', "t");
+    sd_bus_message_append(m, "t", memory_bytes);
+    sd_bus_message_close_container(m);
+    sd_bus_message_close_container(m);
 
     // disable swap
-    snprintf(file_path, sizeof(file_path), "%s/memory.swap.max", cgroup_path);
-    write_file(file_path, "0");
+    sd_bus_message_open_container(m, 'r', "sv");
+    sd_bus_message_append(m, "s", "MemorySwapMax");
+    sd_bus_message_open_container(m, 'v', "t");
+    sd_bus_message_append(m, "t", (uint64_t) 0);
+    sd_bus_message_close_container(m);
+    sd_bus_message_close_container(m);
 
-    // set cpu time limit
-    snprintf(file_path, sizeof(file_path), "%s/cpu.max", cgroup_path);
-    snprintf(val_buf, sizeof(val_buf), "%d 100000", cpu_us);
-    write_file(file_path, val_buf);
+    // set pid limit to 64
+    sd_bus_message_open_container(m, 'r', "sv");
+    sd_bus_message_append(m, "s", "TasksMax");
+    sd_bus_message_open_container(m, 'v', "t");
+    sd_bus_message_append(m, "t", (uint64_t) 64);
+    sd_bus_message_close_container(m);
+    sd_bus_message_close_container(m);
 
-    // set pid limit to 64 processes
-    snprintf(file_path, sizeof(file_path), "%s/pids.max", cgroup_path);
-    write_file(file_path, "64");
-
-    // set i/o limit
-    struct stat st;
-    if (stat("/", &st) == 0) {
-        int dev_major = major(st.st_dev);
-        int dev_minor = minor(st.st_dev);
-
-        // set i/o limit to 10 mb/s
-        snprintf(file_path, sizeof(file_path), "%s/io.max", cgroup_path);
-        snprintf(val_buf, sizeof(val_buf), "%d:%d rbps=10485760 wbps=10485760",
-                         dev_major, dev_minor);
-
-        if (write_file(file_path, val_buf) != 0) {
-            fprintf(stderr, "io.max\n");
-        }
-    } else {
-        perror("stat / failed for io.max");
+    // set cpu limit
+    if (cpu_us > 0) {
+        sd_bus_message_open_container(m, 'r', "sv");
+        sd_bus_message_append(m, "s", "CPUQuotaPerSecUSec");
+        sd_bus_message_open_container(m, 'v', "t");
+        sd_bus_message_append(m, "t", cpu_us);
+        sd_bus_message_close_container(m);
+        sd_bus_message_close_container(m);
     }
-}
 
-void allocate_resources(pid_t sandbox_id) {
-    char file_path[512];
-    snprintf(file_path, sizeof(file_path), "/sys/fs/cgroup/sandbox_%d/cgroup.procs", sandbox_id);
+    // end properties
+    sd_bus_message_close_container(m);
 
-    if (write_file(file_path, "0") != 0) {
-        fprintf(stderr, "allocate resources\n");
+    sd_bus_message_open_container(m, 'a', "(sa(sv))");
+    sd_bus_message_close_container(m);
+
+    // send message to systemd
+    r = sd_bus_call(bus, m, 0, &error, NULL);
+    if (r < 0) {
+        fprintf(stderr, "systemd: %s\n", error.message);
     }
-}
 
-void cleanup_resources(pid_t sandbox_id) {
-    char cgroup_path[256];
-    snprintf(cgroup_path, sizeof(cgroup_path), "/sys/fs/cgroup/sandbox_%d", sandbox_id);
-    rmdir(cgroup_path);
+    // cleanup
+    sd_bus_error_free(&error);
+    sd_bus_message_unref(m);
+    sd_bus_unref(bus);
+
+    return r;
 }

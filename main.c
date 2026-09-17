@@ -13,7 +13,6 @@
 #include <pty.h>
 #include <string.h>
 #include <termios.h>
-#include <grp.h>
 #include <sys/socket.h>
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
@@ -48,22 +47,14 @@ int child_fn(void *arg) {
     int *args = arg;
     int shell_mode = args[0];
     int share_net = args[1];
-    int ram_limit = args[2];
-    int cpu_limit = args[3];
-    int parent_pid = args[4];
-    int sync_sock = args[5];
+    int parent_pid = args[2];
+    int sync_sock = args[3];
 
     char sync_pipe;
     if (read(sync_sock, &sync_pipe, 1) != 1) {
         fprintf(stderr, "child_fn sync_pipe");
         _exit(1);
     }
-
-    // create cgroup
-    // create_resources(parent_pid, ram_limit, cpu_limit);
-
-    // assign process to cgroup
-    // allocate_resources(parent_pid);
 
     if (create_fs(tarball_path, parent_pid, disk_limit) != 0) {
         fprintf(stderr, "create fs failed\n");
@@ -367,18 +358,6 @@ int child_fn(void *arg) {
 }
 
 int main(int argc, char *argv[]) {
-    /*
-    // init root cgroup
-    mkdir("/sys/fs/cgroup/init", 0755);
-    FILE *f_init = fopen("/sys/fs/cgroup/init/cgroup.procs", "w");
-    if (f_init) {
-        fprintf(f_init, "0\n");
-        fclose(f_init);
-    } else {
-        perror("fopen /sys/fs/cgroup/init/cgroup.procs");
-    }
-    */
-
     // default values
     int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
     int ram_limit = 256; // mb
@@ -482,7 +461,7 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    int child_args[6] = {shell_mode, share_net, ram_limit, cpu_limit, parent_pid, sync_sockets[1]};
+    int child_args[4] = {shell_mode, share_net, parent_pid, sync_sockets[1]};
     pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
@@ -498,6 +477,13 @@ int main(int argc, char *argv[]) {
         close(sync_sockets[0]);
         exit(1);
     }
+
+    // create and assign cgroup
+    if (allocate_resources(child_pid, ram_limit, cpu_limit) < 0) {
+        fprintf(stderr, "allocate_resources\n");
+        exit(1);
+    }
+
     if (write(sync_sockets[0], "1", 1) != 1) {
         perror("write sync_sockets");
         return 1;
@@ -516,7 +502,6 @@ int main(int argc, char *argv[]) {
     printf("\n");
     printf("cleaning up resources\n");
 
-    cleanup_resources(parent_pid);
     free(env_variables);
 
     char base_dir[256];
