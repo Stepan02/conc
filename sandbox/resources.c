@@ -59,6 +59,15 @@ int allocate_resources(pid_t child_pid, int ram_mb, uint64_t cpu_us) {
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
 
+    // set ram high limit to 90% of ram limit
+    uint64_t memory_high_bytes = (memory_bytes * 9) / 10;
+    sd_bus_message_open_container(m, 'r', "sv");
+    sd_bus_message_append(m, "s", "MemoryHigh");
+    sd_bus_message_open_container(m, 'v', "t");
+    sd_bus_message_append(m, "t", memory_high_bytes);
+    sd_bus_message_close_container(m);
+    sd_bus_message_close_container(m);
+
     // disable swap
     sd_bus_message_open_container(m, 'r', "sv");
     sd_bus_message_append(m, "s", "MemorySwapMax");
