@@ -89,6 +89,7 @@ int child_fn(void *arg) {
     snprintf(path, sizeof(path), "%s/tmp", merged);
     mkdir(path, 0777);
 
+    // mask fips
     char fips_path[256];
     snprintf(fips_path, sizeof(fips_path), "%s/proc/sys/crypto/fips_enabled", merged);
     if (access(fips_path, F_OK) == 0) {
@@ -98,6 +99,19 @@ int child_fn(void *arg) {
             close(tmp_fd);
             mount("/tmp/fips_zero", fips_path, NULL, MS_BIND, NULL);
         }
+    }
+
+    // mask sysrq-trigger
+    char sysrq_trigger_path[256];
+    snprintf(sysrq_trigger_path, sizeof(sysrq_trigger_path), "%s/proc/sysrq-trigger", merged);
+    if (mount("/dev/null", sysrq_trigger_path, NULL, MS_BIND, NULL) == -1) {
+        perror("mask sysrq-trigger");
+    }
+
+    char sys_path[256];
+    snprintf(sys_path, sizeof(sys_path), "%s/proc/sys", merged);
+    if (mount(sys_path, sys_path, NULL, MS_BIND | MS_REC, NULL) == 0) {
+        mount(sys_path, sys_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL);
     }
 
     snprintf(path, sizeof(path), "%s/dev", merged);
