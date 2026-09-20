@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -34,7 +33,9 @@ int map_user(pid_t child_pid) {
     snprintf(path, sizeof(path), "/proc/%d/setgroups", child_pid);
     fd = open(path, O_WRONLY);
     if (fd != -1) {
-        write(fd, "deny", 4);
+        if (write(fd, "deny", 4) < 0) {
+            perror("write deny");
+        }
         close(fd);
     }
 

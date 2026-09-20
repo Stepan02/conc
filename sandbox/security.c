@@ -3,9 +3,6 @@
 #include <stdio.h>
 #include <errno.h>
 #include <sys/prctl.h>
-#include <sched.h>
-#include <sys/wait.h>
-#include <poll.h>
 #include <sys/ioctl.h>
 
 int setup_syscall_blacklist(void) {
@@ -84,49 +81,28 @@ int setup_syscall_blacklist(void) {
     return notify_fd;
 }
 
-void syscall_handler(int notify_fd, pid_t child_pid) {
-    struct pollfd pfd;
-    pfd.fd = notify_fd;
-    pfd.events = POLLIN;
-
-    while (1) {
-        int status;
-        // check whether the child is running
-        pid_t running = waitpid(child_pid, &status, WNOHANG);
-        if (running > 0) {
-            break;
-        } else if (running == -1 && errno != ECHILD) {
-            perror("syscall_handler waitpid");
-            break;
+void syscall_handler(int notify_fd) {
+    struct seccomp_notif req = {};
+    if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_RECV, &req) == -1) {
+        if (errno == ENOENT || errno == EINTR) {
+            return;
         }
 
-        // wait for notify_fd event
-        int poll_ret = poll(&pfd, 1, 100);
+        perror("ioctl seccomp_notif");
+        return;
+    }
 
-        if (poll_ret > 0 && (pfd.revents & POLLIN)) {
-            struct seccomp_notif req = {};
-            if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_RECV, &req) == -1) {
-                if (errno == ENOENT || errno == EINTR) {
-                    continue;
-                }
+    printf("intercepted syscall %d (pid %d)\r\n", req.data.nr, req.pid);
+    fflush(stdout);
 
-                perror("ioctl seccomp_notif");
-                break;
-            }
+    // setup response
+    struct seccomp_notif_resp response = {};
+    response.id = req.id;
+    response.error = -EPERM; // permission denied error
+    response.val = 0;
 
-            printf("intercepted syscall %d (pid %d)\n", req.data.nr, req.pid);
-
-            // setup response
-            struct seccomp_notif_resp response = {};
-            response.id = req.id;
-            response.error = -EPERM; // permission denied error
-            response.val = 0;
-
-            // send the response
-            if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_SEND, &response) == -1) {
-                perror("ioctl seccomp_notif_resp");
-                break;
-            }
-        }
+    // send the response
+    if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_SEND, &response) == -1) {
+        perror("ioctl seccomp_notif_resp");
     }
 }

@@ -233,7 +233,9 @@ int create_fs(const char *tarball_path, const int pid, int disk_limit) {
 
     if (unzip_fs(tarball_path, lower_directory) == -1) {
         perror("unzip_fs");
-        chdir(current_working_directory);
+        if (chdir(current_working_directory) == -1) {
+            perror("chdir cwd");
+        }
         return -1;
     }
 
@@ -297,7 +299,7 @@ int remove_directory(const char *path) {
 }
 
 int mount_fs() {
-    char path[256];
+    char path[512];
 
     snprintf(path, sizeof(path), "%s/proc", merged);
     MKDIR_OR_FAIL(path, 0555);

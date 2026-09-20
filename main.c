@@ -3,7 +3,6 @@
 #include <sys/wait.h>
 #include <sys/mount.h>
 #include <sys/stat.h>
-#include <sys/types.h>
 #include <sys/ioctl.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -14,6 +13,7 @@
 #include <string.h>
 #include <termios.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
 #include "sandbox/security.h"
@@ -49,6 +49,7 @@ int child_fn(void *arg) {
     int share_net = args[1];
     int parent_pid = args[2];
     int sync_sock = args[3];
+    int slave_fd = args[4];
 
     char sync_pipe;
     if (read(sync_sock, &sync_pipe, 1) != 1) {
@@ -58,19 +59,19 @@ int child_fn(void *arg) {
 
     if (create_fs(tarball_path, parent_pid, disk_limit) != 0) {
         fprintf(stderr, "create fs failed\n");
-        exit(1);
+        _exit(1);
     }
 
     if (mount_overlayfs(parent_pid) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
-        exit(1);
+        _exit(1);
     }
 
     // copy files if provided
     for (int i = 0; i < file_count; i++) {
         if (copy_file(file_sources[i], parent_pid) != 0) {
             fprintf(stderr, "copy failed\n");
-            exit(1);
+            _exit(1);
         }
     }
 
@@ -80,7 +81,7 @@ int child_fn(void *arg) {
 
     snprintf(merged, sizeof(merged), "/tmp/runner-%d/merged", parent_pid);
 
-    char path[256];
+    char path[512];
     snprintf(path, sizeof(path), "%s/proc", merged);
     if (mount("proc", path, "proc", 0, NULL) == -1) {
         perror("mount /proc");
@@ -90,25 +91,28 @@ int child_fn(void *arg) {
     mkdir(path, 0777);
 
     // mask fips
-    char fips_path[256];
+    char fips_path[512];
     snprintf(fips_path, sizeof(fips_path), "%s/proc/sys/crypto/fips_enabled", merged);
     if (access(fips_path, F_OK) == 0) {
         int tmp_fd = open("/tmp/fips_zero", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (tmp_fd != -1) {
-            write(tmp_fd, "0\n", 2);
+            if (write(tmp_fd, "0\n", 2) !=2) {
+                perror("write fips_zero");
+            }
+
             close(tmp_fd);
             mount("/tmp/fips_zero", fips_path, NULL, MS_BIND, NULL);
         }
     }
 
     // mask sysrq-trigger
-    char sysrq_trigger_path[256];
+    char sysrq_trigger_path[512];
     snprintf(sysrq_trigger_path, sizeof(sysrq_trigger_path), "%s/proc/sysrq-trigger", merged);
     if (mount("/dev/null", sysrq_trigger_path, NULL, MS_BIND, NULL) == -1) {
         perror("mask sysrq-trigger");
     }
 
-    char sys_path[256];
+    char sys_path[512];
     snprintf(sys_path, sizeof(sys_path), "%s/proc/sys", merged);
     if (mount(sys_path, sys_path, NULL, MS_BIND | MS_REC, NULL) == 0) {
         mount(sys_path, sys_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL);
@@ -122,7 +126,9 @@ int child_fn(void *arg) {
         snprintf(path, sizeof(path), "%s%s", merged, sys_devs[i]);
 
         int fd = open(path, O_WRONLY | O_CREAT, 0666);
-        if (fd != -1) close(fd);
+        if (fd != -1) {
+            close(fd);
+        }
 
         if (mount(sys_devs[i], path, NULL, MS_BIND, NULL) == -1) {
             perror(sys_devs[i]);
@@ -149,34 +155,34 @@ int child_fn(void *arg) {
     // check merged mountpoint
     if (mount(merged, merged, NULL, MS_BIND | MS_REC, NULL) == -1) {
         perror("mount bind merged");
-        return 1;
+        _exit(1);
     }
 
     // change root
     if (chdir(merged) == -1) {
         perror("chdir merged");
-        return 1;
+        _exit(1);
     }
 
     if (chroot(merged) == -1) {
         perror("chroot");
-        return 1;
+        _exit(1);
     }
 
     if (chdir("/") == -1) {
         perror("chdir /");
-        return 1;
+        _exit(1);
     }
 
     /*
     if (syscall(SYS_pivot_root, merged, put_old) == -1) {
         perror("pivot_root");
-        return 1;
+        _exit(1);
     }
 
     if (chdir("/") == -1) {
         perror("chdir");
-        return 1;
+        _exit(1);
     }
 
     // detach old root
@@ -202,7 +208,7 @@ int child_fn(void *arg) {
     if (!share_net) {
         if (setup_loopback() != 0) {
             perror("setup lo");
-            return 1;
+            _exit(1);
         }
     }
 
@@ -223,150 +229,47 @@ int child_fn(void *arg) {
         putenv(env_variables[i]);
     }
 
+    // init syscall blacklist
+    int notify_fd = setup_syscall_blacklist();
+    if (notify_fd < 0) {
+        perror("syscall blacklist");
+        _exit(1);
+    }
+
+    if (send_fd(sync_sock, notify_fd) < 0) {
+        perror("send_fd");
+        _exit(1);
+    }
+
+    close(notify_fd);
+    close(sync_sock);
+
     // no shell mode
     if (shell_mode == 0) {
-        // init syscall blacklist
-        int notify_fd = setup_syscall_blacklist();
-        if (notify_fd < 0) {
-            perror("syscall blacklist");
-            _exit(1);
-        }
-
-        if (send_fd(sync_sock, notify_fd) < 0) {
-            perror("send_fd");
-            _exit(1);
-        }
-
-        close(notify_fd);
-        close(sync_sock);
-
-        if (access("/bin/sh", X_OK) == -1) {
-            perror("sh not executable");
-            _exit(1);
-        }
-
         // disable stdin
         int null_fd = open("/dev/null", O_RDONLY);
         if (null_fd != -1) {
             dup2(null_fd, STDIN_FILENO);
             close(null_fd);
         }
-
-        // close descriptors
-        for (int fd = 3; fd < 1024; fd++) {
-            close(fd);
-        }
-
-        execvp(command[0], command);
-        perror("execvp");
-        _exit(1);
     } else {
         // shell mode
-        int master_fd;
-        fprintf(stderr, "launching sh\n");
-        fflush(stderr);
+        dup2(slave_fd, STDIN_FILENO);
+        dup2(slave_fd, STDOUT_FILENO);
+        dup2(slave_fd, STDERR_FILENO);
+        close(slave_fd);
 
-        struct winsize w;
-        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &w) == -1) {
-            w.ws_row = 24;
-            w.ws_col = 80;
+        setsid();
+        if (ioctl(STDIN_FILENO, TIOCSCTTY, 0) == -1) {
+            perror("ioctl tiocsctty");
         }
-
-        pid_t shell_pid = forkpty(&master_fd, NULL, NULL, &w);
-
-        if (shell_pid == -1) {
-            perror("forkpty");
-            _exit(1);
-        }
-
-        if (master_fd < 0) {
-            fprintf(stderr, "forkpty returned invalid master_fd\n");
-            _exit(1);
-        }
-
-        if (shell_pid == 0) {
-            // init syscall blacklist
-            int notify_fd = setup_syscall_blacklist();
-            if (notify_fd < 0) {
-                perror("syscall blacklist");
-                _exit(1);
-            }
-
-            if (send_fd(sync_sock, notify_fd) < 0) {
-                perror("send_fd");
-                _exit(1);
-            }
-
-            close(notify_fd);
-            close(sync_sock);
-
-            if (access(command[0], X_OK) == -1) {
-                dprintf(2, "%s not executable", command[0]);
-                _exit(1);
-            }
-
-            // close descriptors
-            for (int fd = 3; fd < 1024; fd++) {
-                close(fd);
-            }
-
-            execvp(command[0], command);
-            perror("execvp");
-            _exit(1);
-        }
-
-        close(sync_sock);
-
-        struct termios orig_termios, raw;
-        int is_tty = isatty(STDIN_FILENO);
-
-        if (is_tty) {
-            tcgetattr(STDIN_FILENO, &orig_termios);
-            raw = orig_termios;
-            cfmakeraw(&raw);
-            tcsetattr(STDIN_FILENO, TCSANOW, &raw);
-        }
-
-        fd_set fds;
-        char buf[256];
-        int maxfd = (master_fd > STDIN_FILENO) ? master_fd : STDIN_FILENO;
-        ssize_t n;
-
-        while (1) {
-            FD_ZERO(&fds);
-            FD_SET(STDIN_FILENO, &fds);
-            FD_SET(master_fd, &fds);
-
-            if (select(maxfd + 1, &fds, NULL, NULL, NULL) == -1) {
-                if (errno == EINTR) continue;
-
-                perror("select");
-                break;
-            }
-
-            if (FD_ISSET(STDIN_FILENO, &fds)) {
-                n = read(STDIN_FILENO, buf, sizeof(buf));
-                if (n <= 0) break;
-
-                if (write(master_fd, buf, n) != n) break;
-            }
-
-            if (FD_ISSET(master_fd, &fds)) {
-                n = read(master_fd, buf, sizeof(buf));
-                if (n <= 0) break;
-
-                if (write(STDOUT_FILENO, buf, n) != n) break;
-            }
-        }
-
-        if (is_tty) {
-            tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
-        }
-
-        int status;
-        waitpid(shell_pid, &status, 0);
-        close(master_fd);
     }
+
+    // close descriptors
+    syscall(SYS_close_range, 3, ~0U, 0);
+    execvp(command[0], command);
+    perror("execvp");
+    _exit(1);
 
     return 0;
 }
@@ -469,13 +372,23 @@ int main(int argc, char *argv[]) {
         flags |= CLONE_NEWNET;
     }
 
+    // prepare pty
+    int master_fd = -1;
+    int slave_fd = -1;
+    if (shell_mode) {
+        if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) < 0) {
+            perror("openpty");
+            return 1;
+        }
+    }
+
     int sync_sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sync_sockets) < 0) {
         perror("socketpair");
         return 1;
     }
 
-    int child_args[4] = {shell_mode, share_net, parent_pid, sync_sockets[1]};
+    int child_args[5] = {shell_mode, share_net, parent_pid, sync_sockets[1], slave_fd};
     pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
@@ -510,8 +423,115 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    // handle syscalls
-    syscall_handler(notify_fd, child_pid);
+    if (slave_fd != -1) {
+        close(slave_fd);
+    }
+
+    struct termios orig_termios, raw;
+    int is_tty = isatty(STDIN_FILENO);
+
+    if (is_tty) {
+        tcgetattr(STDIN_FILENO, &orig_termios);
+
+        if (shell_mode) {
+            raw = orig_termios;
+            cfmakeraw(&raw);
+            tcsetattr(STDIN_FILENO, TCSANOW, &raw);
+        }
+    }
+
+    fd_set fds;
+    char buf[256];
+    int max_fd = notify_fd;
+    ssize_t n;
+
+    if (shell_mode && master_fd != -1) {
+        if (master_fd > max_fd) {
+            max_fd = master_fd;
+        }
+
+        if (STDIN_FILENO > max_fd) {
+            max_fd = STDIN_FILENO;
+        }
+    }
+
+    while (1) {
+        // check whether the child is running
+        int child_status;
+        pid_t running = waitpid(child_pid, &child_status, WNOHANG);
+
+        if (running > 0) {
+            break;
+        }
+
+        FD_ZERO(&fds);
+
+        // monitor input and output in shell mode
+        if (shell_mode && master_fd != -1) {
+            FD_SET(STDIN_FILENO, &fds);
+            FD_SET(master_fd, &fds);
+        }
+
+        // monitor syscalls
+        FD_SET(notify_fd, &fds);
+
+        // pty loop
+        int sel_ret = select(max_fd + 1, &fds, NULL, NULL, NULL);
+        if (sel_ret == -1) {
+            if (errno == EINTR) {
+                continue;
+            }
+
+            perror("select");
+            break;
+        }
+
+        // continue to another iteration after timeout
+        if (sel_ret == 0) {
+            continue;
+        }
+
+        if (shell_mode) {
+            // direct input to child
+            if (master_fd != -1 && FD_ISSET(STDIN_FILENO, &fds)) {
+                n = read(STDIN_FILENO, buf, sizeof(buf));
+                if (n <= 0) {
+                    break;
+                }
+
+                if (write(master_fd, buf, n) != n) {
+                    break;
+                }
+            }
+
+            // direct child output to pty
+            if (master_fd != -1 && FD_ISSET(master_fd, &fds)) {
+                n = read(master_fd, buf, sizeof(buf));
+                if (n <= 0) {
+                    break;
+                }
+
+                if (write(STDOUT_FILENO, buf, n) != n) {
+                    break;
+                }
+            }
+        }
+
+        // intercept syscall notifications
+        if (FD_ISSET(notify_fd, &fds)) {
+            syscall_handler(notify_fd);
+        }
+    }
+
+    if (is_tty) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &orig_termios);
+    }
+
+    if (master_fd != -1) {
+        close(master_fd);
+    }
+
+    close(notify_fd);
 
     printf("\n");
     printf("cleaning up resources\n");
