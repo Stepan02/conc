@@ -58,7 +58,7 @@ int setup_syscall_blacklist(void) {
 
     // disallow elevating privileges
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        perror("PR_SET_NO_NEW_PRIVS");
+        perror("pr_set_no_new_privs");
         return -1;
     }
 
@@ -81,9 +81,21 @@ int setup_syscall_blacklist(void) {
     return notify_fd;
 }
 
+static struct seccomp_notif_resp syscall_emulator(struct seccomp_notif *request) {
+    printf("syscall %d\n", request->data.nr);
+
+    // setup response
+    struct seccomp_notif_resp response = {};
+    response.id = request->id;
+    response.error = -EPERM; // permission denied error
+    response.val = 0;
+
+    return response;
+}
+
 void syscall_handler(int notify_fd) {
-    struct seccomp_notif req = {};
-    if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_RECV, &req) == -1) {
+    struct seccomp_notif request = {};
+    if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_RECV, &request) == -1) {
         if (errno == ENOENT || errno == EINTR) {
             return;
         }
@@ -92,14 +104,12 @@ void syscall_handler(int notify_fd) {
         return;
     }
 
-    printf("intercepted syscall %d (pid %d)\r\n", req.data.nr, req.pid);
+    printf("intercepted syscall %d (pid %d)\r\n", request.data.nr, request.pid);
     fflush(stdout);
 
-    // setup response
+    // get response
     struct seccomp_notif_resp response = {};
-    response.id = req.id;
-    response.error = -EPERM; // permission denied error
-    response.val = 0;
+    response = syscall_emulator(&request);
 
     // send the response
     if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_SEND, &response) == -1) {
