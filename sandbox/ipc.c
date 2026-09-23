@@ -1,7 +1,8 @@
+#include "ipc.h"
 #include <sys/socket.h>
 #include <sys/uio.h>
 
-int send_fd(int sock, int fd) {
+int send_fd(const int sock, const int fd) {
     char buffer[1] = {0};
     struct iovec iov = {.iov_base = buffer, .iov_len = sizeof(buffer)};
 
@@ -30,7 +31,7 @@ int send_fd(int sock, int fd) {
     return 0;
 }
 
-int recv_fd(int sock) {
+int recv_fd(const int sock) {
     char buffer[1];
     struct iovec iov = {.iov_base = buffer, .iov_len = sizeof(buffer)};
 

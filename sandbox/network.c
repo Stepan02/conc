@@ -1,3 +1,4 @@
+#include "network.h"
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -6,7 +7,7 @@
 #include <net/if.h>
 
 int setup_loopback(void) {
-    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    const int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("socket");
         return -1;

@@ -4,6 +4,8 @@ project(runner C)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+add_compile_definitions(_GNU_SOURCE)
+
 add_executable(runner main.c
         filesystem/fs.h
         filesystem/fs.c

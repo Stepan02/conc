@@ -1,4 +1,3 @@
-#define _GNU_SOURCE
 #include <sched.h>
 #include <sys/wait.h>
 #include <sys/mount.h>
@@ -22,34 +21,34 @@
 #include "sandbox/ipc.h"
 
 // global hostname variable
-char hostname[64];
+static char hostname[64];
 
 // global tarball path variable
-char tarball_path[1024];
+static char tarball_path[1024];
 
 // global disk_limit variable
-int disk_limit = 1024; // mb
+static int disk_limit = 1024; // mb
 
 // global files to copy buffers
-char file_sources[10][512];
-int file_count = 0;
+static char file_sources[10][512];
+static int file_count = 0;
 
 // global env variables
-char **env_variables = NULL;
-int env_variables_count = 0;
+static char **env_variables = NULL;
+static int env_variables_count = 0;
 
 // setup child process stack and command variable
 #define STACK_SIZE (1024 * 1024)
 static char child_stack[STACK_SIZE];
-char **command = NULL;
+static char **command = NULL;
 
-int child_fn(void *arg) {
-    int *args = arg;
-    int shell_mode = args[0];
-    int share_net = args[1];
-    int parent_pid = args[2];
-    int sync_sock = args[3];
-    int slave_fd = args[4];
+static int child_fn(void *arg) {
+    const int *args = arg;
+    const int shell_mode = args[0];
+    const int share_net = args[1];
+    const int parent_pid = args[2];
+    const int sync_sock = args[3];
+    const int slave_fd = args[4];
 
     char sync_pipe;
     if (read(sync_sock, &sync_pipe, 1) != 1) {
@@ -125,7 +124,7 @@ int child_fn(void *arg) {
         const char *sys_devs[] = {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"};
         snprintf(path, sizeof(path), "%s%s", merged, sys_devs[i]);
 
-        int fd = open(path, O_WRONLY | O_CREAT, 0666);
+        const int fd = open(path, O_WRONLY | O_CREAT, 0666);
         if (fd != -1) {
             close(fd);
         }
@@ -230,7 +229,7 @@ int child_fn(void *arg) {
     }
 
     // init syscall blacklist
-    int notify_fd = setup_syscall_blacklist();
+    const int notify_fd = setup_syscall_blacklist();
     if (notify_fd < 0) {
         perror("syscall blacklist");
         _exit(1);
@@ -247,7 +246,7 @@ int child_fn(void *arg) {
     // no shell mode
     if (shell_mode == 0) {
         // disable stdin
-        int null_fd = open("/dev/null", O_RDONLY);
+        const int null_fd = open("/dev/null", O_RDONLY);
         if (null_fd != -1) {
             dup2(null_fd, STDIN_FILENO);
             close(null_fd);
@@ -274,7 +273,7 @@ int child_fn(void *arg) {
     return 0;
 }
 
-int main(int argc, char *argv[]) {
+int main(const int argc, char *argv[]) {
     // default values
     int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
     int ram_limit = 256; // mb
@@ -389,7 +388,7 @@ int main(int argc, char *argv[]) {
     }
 
     int child_args[5] = {shell_mode, share_net, parent_pid, sync_sockets[1], slave_fd};
-    pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
+    const pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
         perror("clone");
@@ -417,7 +416,7 @@ int main(int argc, char *argv[]) {
     }
 
     // listen to child notifications for syscalls
-    int notify_fd = recv_fd(sync_sockets[0]);
+    const int notify_fd = recv_fd(sync_sockets[0]);
     if (notify_fd < 0) {
         fprintf(stderr, "receive notify_fd\n");
         return 1;
@@ -428,7 +427,7 @@ int main(int argc, char *argv[]) {
     }
 
     struct termios orig_termios, raw;
-    int is_tty = isatty(STDIN_FILENO);
+    const int is_tty = isatty(STDIN_FILENO);
 
     if (is_tty) {
         tcgetattr(STDIN_FILENO, &orig_termios);
@@ -458,7 +457,7 @@ int main(int argc, char *argv[]) {
     while (1) {
         // check whether the child is running
         int child_status;
-        pid_t running = waitpid(child_pid, &child_status, WNOHANG);
+        const pid_t running = waitpid(child_pid, &child_status, WNOHANG);
 
         if (running > 0) {
             break;
@@ -476,7 +475,7 @@ int main(int argc, char *argv[]) {
         FD_SET(notify_fd, &fds);
 
         // pty loop
-        int sel_ret = select(max_fd + 1, &fds, NULL, NULL, NULL);
+        const int sel_ret = select(max_fd + 1, &fds, NULL, NULL, NULL);
         if (sel_ret == -1) {
             if (errno == EINTR) {
                 continue;

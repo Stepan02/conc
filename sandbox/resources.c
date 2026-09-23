@@ -1,10 +1,11 @@
+#include "resources.h"
 #include <sched.h>
 #include <systemd/sd-bus.h>
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
 
-int allocate_resources(pid_t child_pid, int ram_mb, uint64_t cpu_us) {
+int allocate_resources(const pid_t child_pid, const int ram_mb, const uint64_t cpu_us) {
     sd_bus *bus = NULL;
     sd_bus_message *m = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;

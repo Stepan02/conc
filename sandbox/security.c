@@ -1,3 +1,4 @@
+#include "security.h"
 #include <seccomp.h>
 #include <linux/seccomp.h>
 #include <stdio.h>
@@ -16,7 +17,7 @@ struct resources {
 };
 
 static struct resources read_resources(pid_t pid) {
-    struct resources response = {0, 0};
+    struct resources response = {.max = 0, .current = 0};
 
     char full_path[256];
     snprintf(full_path, 256, "/proc/%d/cgroup", pid);
@@ -70,11 +71,11 @@ static struct resources read_resources(pid_t pid) {
     return response;
 }
 
-static int memory_write(pid_t pid, unsigned long remote_address, void *buffer, size_t length) {
+static int memory_write(const pid_t pid, const unsigned long remote_address, const void *buffer, const size_t length) {
     char memory_path[64];
     snprintf(memory_path, sizeof(memory_path), "/proc/%d/mem", pid);
 
-    int fd = open(memory_path, O_WRONLY);
+    const int fd = open(memory_path, O_WRONLY);
     if (fd < 0) {
         return -1;
     }
@@ -89,7 +90,7 @@ static int memory_write(pid_t pid, unsigned long remote_address, void *buffer, s
 }
 
 int setup_syscall_blacklist(void) {
-    scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+    const scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
     if (!ctx) {
         perror("seccomp_init");
         return -1;
@@ -130,7 +131,7 @@ int setup_syscall_blacklist(void) {
         SCMP_SYS(unshare),
         SCMP_SYS(setns)
     };
-    int num_blocked = sizeof(syscall_blacklist) / sizeof(syscall_blacklist[0]);
+    const int num_blocked = sizeof(syscall_blacklist) / sizeof(syscall_blacklist[0]);
     for (int i = 0; i < num_blocked; i++) {
         // add seccomp rule
         if (seccomp_rule_add(ctx, SCMP_ACT_NOTIFY, syscall_blacklist[i], 0) < 0) {
@@ -154,7 +155,7 @@ int setup_syscall_blacklist(void) {
     }
 
     // setup listener
-    int notify_fd = seccomp_notify_fd(ctx);
+    const int notify_fd = seccomp_notify_fd(ctx);
     if (notify_fd < 0) {
         perror("seccomp_notify_fd");
         seccomp_release(ctx);
@@ -165,7 +166,7 @@ int setup_syscall_blacklist(void) {
     return notify_fd;
 }
 
-static struct seccomp_notif_resp syscall_emulator(struct seccomp_notif *request) {
+static struct seccomp_notif_resp syscall_emulator(const struct seccomp_notif *request) {
     printf("syscall %d\n", request->data.nr);
 
     // setup response
@@ -174,7 +175,7 @@ static struct seccomp_notif_resp syscall_emulator(struct seccomp_notif *request)
 
     // emulate sysinfo syscall
     if (request->data.nr == SCMP_SYS(sysinfo)) {
-        unsigned long remote_address = request->data.args[0];
+        const unsigned long remote_address = request->data.args[0];
 
         // get sysinfo from host
         struct sysinfo info = {};
@@ -223,7 +224,7 @@ static struct seccomp_notif_resp syscall_emulator(struct seccomp_notif *request)
     return response;
 }
 
-void syscall_handler(int notify_fd) {
+void syscall_handler(const int notify_fd) {
     struct seccomp_notif request = {};
     if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_RECV, &request) == -1) {
         if (errno == ENOENT || errno == EINTR) {

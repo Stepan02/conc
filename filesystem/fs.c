@@ -1,4 +1,4 @@
-#define _GNU_SOURCE
+#include "fs.h"
 #include <sched.h>
 #include <sys/wait.h>
 #include <sys/mount.h>
@@ -27,10 +27,10 @@ printf("mkdir %s: created\n", path); \
 } \
 } while(0)
 
-char upperdir[256];
-char workdir[256];
+static char upperdir[256];
+static char workdir[256];
+static char base[256]; // /tmp/runner-<id>
 char merged[256];
-char base[256]; // /tmp/runner-<id>
 
 static int copy_data(struct archive *ar, struct archive *aw) {
     const void *buffer;
@@ -59,7 +59,7 @@ static int copy_data(struct archive *ar, struct archive *aw) {
 }
 
 int copy_file(const char *src, int parent_pid) {
-    int source_fd = open(src, O_RDONLY);
+    const int source_fd = open(src, O_RDONLY);
     if (source_fd == -1) {
         perror("open src file");
         return -1;
@@ -83,7 +83,7 @@ int copy_file(const char *src, int parent_pid) {
     char target_path[256];
     snprintf(target_path, sizeof(target_path), "/tmp/runner-%d/merged/%s", parent_pid, filename);
 
-    int destination_fd = open(target_path, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
+    const int destination_fd = open(target_path, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
     if (destination_fd < 0) {
         perror("open target path");
         close(source_fd);
@@ -261,7 +261,7 @@ int remove_directory(const char *path) {
         if (!strcmp(p->d_name, ".") || !strcmp(p->d_name, ".."))
             continue;
 
-        size_t len = path_len + strlen(p->d_name) + 2;
+        const size_t len = path_len + strlen(p->d_name) + 2;
         char *buf = malloc(len);
         if (!buf) {
             r = -1;

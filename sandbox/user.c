@@ -1,16 +1,17 @@
+#include "user.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <stdio.h>
 
-int map_user(pid_t child_pid) {
+int map_user(const pid_t child_pid) {
     char path[256];
     char map_data[64];
 
     // get uid and gid from host
-    uid_t host_uid = getuid();
-    gid_t host_gid = getgid();
+    const uid_t host_uid = getuid();
+    const gid_t host_gid = getgid();
 
     // map container uid 0 to host uid
     snprintf(path, sizeof(path), "/proc/%d/uid_map", child_pid);
