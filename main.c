@@ -13,6 +13,7 @@
 #include <termios.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <grp.h>
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
 #include "sandbox/security.h"
@@ -36,6 +37,10 @@ static int file_count = 0;
 // global env variables
 static char **env_variables = NULL;
 static int env_variables_count = 0;
+
+// global uid and gid variables
+static int uid = 0; // default uid
+static int gid = 0; // default gid
 
 // setup child process stack and command variable
 #define STACK_SIZE (1024 * 1024)
@@ -95,7 +100,7 @@ static int child_fn(void *arg) {
     if (access(fips_path, F_OK) == 0) {
         int tmp_fd = open("/tmp/fips_zero", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (tmp_fd != -1) {
-            if (write(tmp_fd, "0\n", 2) !=2) {
+            if (write(tmp_fd, "0\n", 2) != 2) {
                 perror("write fips_zero");
             }
 
@@ -220,9 +225,15 @@ static int child_fn(void *arg) {
     clearenv();
 
     setenv("TERM", "xterm-256color", 1);
-    setenv("HOME", "/root", 1);
-    setenv("USER", "root", 1);
     setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin", 1);
+
+    if (uid == 0) {
+        setenv("HOME", "/root", 1);
+        setenv("USER", "root", 1);
+    } else {
+        setenv("HOME", "/", 1);
+        setenv("USER", "runner", 1);
+    }
 
     for (int i = 0; i < env_variables_count; i++) {
         putenv(env_variables[i]);
@@ -261,6 +272,24 @@ static int child_fn(void *arg) {
         setsid();
         if (ioctl(STDIN_FILENO, TIOCSCTTY, 0) == -1) {
             perror("ioctl tiocsctty");
+        }
+    }
+
+    // set uid and gid
+    if (uid != 0 || gid != 0) {
+        if (setgroups(0, NULL) < 0) {
+            perror("setgroups");
+            _exit(1);
+        }
+
+        if (setgid(gid) < 0) {
+            perror("setgid");
+            _exit(1);
+        }
+
+        if (setuid(uid) < 0) {
+            perror("setuid");
+            _exit(1);
         }
     }
 
@@ -324,6 +353,27 @@ int main(const int argc, char *argv[]) {
             }
             env_variables = realloc(env_variables, (env_variables_count + 1) * sizeof(char *));
             env_variables[env_variables_count++] = argv[++i];
+        } else if (strcmp(argv[i], "--user") == 0 || strcmp(argv[i], "-u") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "missing argument for %s\n", argv[i]);
+                return 1;
+            }
+
+            // parse uid and gid
+            char *mapping = strdup(argv[++i]);
+            char *colon = strchr(mapping, ':');
+
+            if (colon != NULL) {
+                *colon = '\0'; // split string to two halves
+                uid = (int) strtol(mapping, NULL, 10);
+                gid = (int) strtol(colon + 1, NULL, 10);
+            } else {
+                // set gid same as uid if only uid was provided
+                uid = (int) strtol(mapping, NULL, 10);
+                gid = uid;
+            }
+
+            free(mapping);
         } else if (strcmp(argv[i], "--copy") == 0 || strcmp(argv[i], "-cp") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "missing argument for %s\n", argv[i]);
