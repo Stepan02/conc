@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/un.h>
 #include <errno.h>
 #include <pty.h>
 #include <string.h>
@@ -20,6 +21,12 @@
 #include "sandbox/network.h"
 #include "sandbox/user.h"
 #include "sandbox/ipc.h"
+
+// global container name variable
+static char container_name[64];
+
+// global default container command
+static char *default_command[] = {"/bin/sh", NULL};
 
 // global hostname variable
 static char hostname[64];
@@ -42,18 +49,23 @@ static int env_variables_count = 0;
 static int uid = 0; // default uid
 static int gid = 0; // default gid
 
+// global shell mode variable
+static int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
+
 // setup child process stack and command variable
 #define STACK_SIZE (1024 * 1024)
 static char child_stack[STACK_SIZE];
 static char **command = NULL;
 
-static int child_fn(void *arg) {
+static int container_runtime(void *arg) {
     const int *args = arg;
-    const int shell_mode = args[0];
-    const int share_net = args[1];
-    const int parent_pid = args[2];
-    const int sync_sock = args[3];
-    const int slave_fd = args[4];
+    const int share_net = args[0];
+    const int sync_sock = args[1];
+    const int slave_fd = args[2];
+
+    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
+        perror("mount MS_PRIVATE");
+    }
 
     char sync_pipe;
     if (read(sync_sock, &sync_pipe, 1) != 1) {
@@ -61,29 +73,25 @@ static int child_fn(void *arg) {
         _exit(1);
     }
 
-    if (create_fs(tarball_path, parent_pid, disk_limit) != 0) {
+    if (create_fs(tarball_path, container_name, disk_limit) != 0) {
         fprintf(stderr, "create fs failed\n");
         _exit(1);
     }
 
-    if (mount_overlayfs(parent_pid) == -1) {
+    if (mount_overlayfs(container_name) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
         _exit(1);
     }
 
     // copy files if provided
     for (int i = 0; i < file_count; i++) {
-        if (copy_file(file_sources[i], parent_pid) != 0) {
+        if (copy_file(file_sources[i], container_name) != 0) {
             fprintf(stderr, "copy failed\n");
             _exit(1);
         }
     }
 
-    if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
-        perror("mount MS_PRIVATE");
-    }
-
-    snprintf(merged, sizeof(merged), "/tmp/runner-%d/merged", parent_pid);
+    snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
 
     char path[512];
     snprintf(path, sizeof(path), "%s/proc", merged);
@@ -302,16 +310,18 @@ static int child_fn(void *arg) {
     return 0;
 }
 
-int main(const int argc, char *argv[]) {
+static int create_container(const int argc, char *argv[]) {
     // default values
-    int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
 
+    // save container name
+    snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+
     // resolve arguments
-    for (int i = 1; i < argc; i++) {
+    for (int i = 3; i < argc; i++) {
         if (strcmp(argv[i], "--no-shell") == 0 || strcmp(argv[i], "-nsh") == 0) {
             shell_mode = 0;
         } else if (strcmp(argv[i], "--share-net") == 0 || strcmp(argv[i], "-sn") == 0) {
@@ -395,7 +405,6 @@ int main(const int argc, char *argv[]) {
     }
 
     // /bin/sh fallback for empty commands
-    static char *default_command[] = {"/bin/sh", NULL};
     if (command == NULL) {
         command = default_command;
     }
@@ -403,22 +412,95 @@ int main(const int argc, char *argv[]) {
     // tarball path is required
     if (tarball_path[0] == '\0') {
         fprintf(stderr, "missing tarball path (--tar <path>)\n");
-        exit(1);
+        return 1;
     }
 
-    int parent_pid = getpid();
+    // prepare container base directory
+    char base_dir[256];
+    snprintf(base_dir, sizeof(base_dir), "/tmp/runner-%s", container_name);
+
+    if (mkdir(base_dir, 0755) < 0) {
+        perror("failed to create base directory");
+        return 1;
+    }
+
+    // write shell mode to a file
+    char shell_mode_path[512];
+    snprintf(shell_mode_path, sizeof(shell_mode_path), "%s/shell-mode", base_dir);
+
+    const int shell_mode_fd = open(shell_mode_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (shell_mode_fd != -1) {
+        const char shell_mode_value = shell_mode ? '1' : '0';
+
+        if (write(shell_mode_fd, &shell_mode_value, 1) < 0) {
+            perror("failed to set shell mode");
+            return 1;
+        }
+
+        close(shell_mode_fd);
+    }
+
+    // create sync socket
+    char socket_path[512];
+    snprintf(socket_path, sizeof(socket_path), "%s/sync.sock", base_dir);
+
+    const int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        perror("failed to create socket");
+        return 1;
+    }
+
+    struct sockaddr_un address = {0};
+    address.sun_family = AF_UNIX;
+    strncpy(address.sun_path, socket_path, sizeof(address.sun_path) - 1);
+    address.sun_path[sizeof(address.sun_path) - 1] = '\0';
+
+    unlink(socket_path);
+
+    if (bind(socket_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("failed to bind socket");
+        close(socket_fd);
+        return 1;
+    }
+
+    if (listen(socket_fd, 1) < 0) {
+        perror("failed to listen socket");
+        close(socket_fd);
+        return 1;
+    }
+
+    // fork supervisor
+    const pid_t supervisor_pid = fork();
+    if (supervisor_pid < 0) {
+        perror("failed to fork supervisor");
+        close(socket_fd);
+        return 1;
+    }
+
+    if (supervisor_pid > 0) {
+        printf("%s\n", container_name);
+        close(socket_fd);
+        return 0;
+    }
+
+    // disconnect from shell
+    setsid();
+
+    // wait for container start
+    const int start_fd = accept(socket_fd, NULL, NULL);
+    if (start_fd < 0) {
+        perror("failed to accept connection");
+        close(socket_fd);
+        _exit(1);
+    }
+
+    close(socket_fd);
 
     // set hostname
     if (strlen(custom_hostname) > 0) {
         snprintf(hostname, sizeof(hostname), "%s", custom_hostname);
     } else {
-        snprintf(hostname, sizeof(hostname), "runner-%d", parent_pid);
-    }
-
-    int flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWCGROUP | CLONE_NEWUSER;
-
-    if (!share_net) {
-        flags |= CLONE_NEWNET;
+        snprintf(hostname, sizeof(hostname), "%s", container_name);
     }
 
     // prepare pty
@@ -437,8 +519,15 @@ int main(const int argc, char *argv[]) {
         return 1;
     }
 
-    int child_args[5] = {shell_mode, share_net, parent_pid, sync_sockets[1], slave_fd};
-    const pid_t child_pid = clone(child_fn, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
+    // prepare clone flags
+    int flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWCGROUP | CLONE_NEWUSER;
+
+    if (!share_net) {
+        flags |= CLONE_NEWNET;
+    }
+
+    int child_args[3] = {share_net, sync_sockets[1], slave_fd};
+    const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
         perror("clone");
@@ -467,6 +556,8 @@ int main(const int argc, char *argv[]) {
 
     // listen to child notifications for syscalls
     const int notify_fd = recv_fd(sync_sockets[0]);
+    close(sync_sockets[0]);
+
     if (notify_fd < 0) {
         fprintf(stderr, "receive notify_fd\n");
         return 1;
@@ -476,6 +567,104 @@ int main(const int argc, char *argv[]) {
         close(slave_fd);
     }
 
+    // send fds to container run process
+    if (shell_mode) {
+        if (send_fd(start_fd, master_fd) < 0) {
+            perror("send master_fd");
+        }
+    }
+    if (send_fd(start_fd, notify_fd) < 0) {
+        perror("send notify_fd");
+    }
+
+    if (master_fd != -1) {
+        close(master_fd);
+    }
+
+    close(notify_fd);
+
+    // wait for container exit
+    int status;
+    waitpid(child_pid, &status, 0);
+
+    printf("\n");
+    printf("cleaning up resources\n");
+
+    free(env_variables);
+
+    if (unmount_fs(container_name) == -1) {
+        perror("unmount fs");
+    }
+
+    if (remove_directory(base_dir) == -1) {
+        perror("rmrf base");
+        printf("errno %d (%s)\n", errno, strerror(errno));
+    }
+
+    printf("overlayfs cleanup done\n");
+    fflush(stdout);
+
+    close(start_fd);
+
+    return 0;
+}
+
+static int start_container() {
+    // connect to container sync socket
+    char socket_path[512];
+    snprintf(socket_path, sizeof(socket_path), "/tmp/runner-%s/sync.sock", container_name);
+
+    const int socket_fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (socket_fd < 0) {
+        perror("failed to create socket");
+        return -1;
+    }
+
+    struct sockaddr_un address = {0};
+    address.sun_family = AF_UNIX;
+    strncpy(address.sun_path, socket_path, sizeof(address.sun_path) - 1);
+    address.sun_path[sizeof(address.sun_path) - 1] = '\0';
+
+    if (connect(socket_fd, (struct sockaddr *)&address, sizeof(address)) < 0) {
+        perror("failed to connect socket");
+        close(socket_fd);
+        return -1;
+    }
+
+    // send start byte to supervisor
+    const char buffer = '1';
+    if (write(socket_fd, &buffer, sizeof(buffer)) < 0) {
+        perror("failed to send start byte");
+    }
+
+    // load shell mode from shell-mode file
+    char shell_mode_path[512];
+    snprintf(shell_mode_path, sizeof(shell_mode_path), "/tmp/runner-%s/shell-mode", container_name);
+
+    const int shell_mode_fd = open(shell_mode_path, O_RDONLY);
+    if (shell_mode_fd != -1) {
+        char shell_mode_value;
+        if (read(shell_mode_fd, &shell_mode_value, sizeof(shell_mode_value)) == 1) {
+            shell_mode = shell_mode_value == '1';
+        }
+        close(shell_mode_fd);
+    }
+
+    // receive fds from supervisor
+    int master_fd = -1;
+    if (shell_mode) {
+        master_fd = recv_fd(socket_fd);
+    }
+    const int notify_fd = recv_fd(socket_fd);
+
+    if ((shell_mode && master_fd < 0) || notify_fd < 0) {
+        perror("failed to receive fds from supervisor");
+        return -1;
+    }
+
+    printf("container '%s' started successfully\n", container_name);
+
+    // start tty
     struct termios orig_termios, raw;
     const int is_tty = isatty(STDIN_FILENO);
 
@@ -505,14 +694,6 @@ int main(const int argc, char *argv[]) {
     }
 
     while (1) {
-        // check whether the child is running
-        int child_status;
-        const pid_t running = waitpid(child_pid, &child_status, WNOHANG);
-
-        if (running > 0) {
-            break;
-        }
-
         FD_ZERO(&fds);
 
         // monitor input and output in shell mode
@@ -568,7 +749,9 @@ int main(const int argc, char *argv[]) {
 
         // intercept syscall notifications
         if (FD_ISSET(notify_fd, &fds)) {
-            syscall_handler(notify_fd);
+            if (syscall_handler(notify_fd) < 0) {
+                break;
+            }
         }
     }
 
@@ -580,22 +763,38 @@ int main(const int argc, char *argv[]) {
         close(master_fd);
     }
 
+    char sync;
+    while (read(socket_fd, &sync, 1) > 0) {}
+    close(socket_fd);
     close(notify_fd);
 
-    printf("\n");
-    printf("cleaning up resources\n");
+    return 0;
+}
 
-    free(env_variables);
+int main(const int argc, char *argv[]) {
+    // create command
+    if (strcmp(argv[1], "create") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
 
-    char base_dir[256];
-    snprintf(base_dir, sizeof(base_dir), "/tmp/runner-%d", parent_pid);
-
-    if (remove_directory(base_dir) == -1) {
-        perror("rmrf base");
-        printf("errno %d (%s)\n", errno, strerror(errno));
+        create_container(argc, argv);
     }
 
-    printf("overlayfs cleanup done\n");
+    // start command
+    else if  (strcmp(argv[1], "start") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
+
+        snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+        start_container();
+    } else {
+        fprintf(stderr, "unknown command %s\n", argv[1]);
+        return 1;
+    }
 
     return 0;
 }

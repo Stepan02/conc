@@ -29,7 +29,7 @@ printf("mkdir %s: created\n", path); \
 
 static char upperdir[256];
 static char workdir[256];
-static char base[256]; // /tmp/runner-<id>
+static char base[256]; // /tmp/runner-<name>
 char merged[256];
 
 static int copy_data(struct archive *ar, struct archive *aw) {
@@ -58,7 +58,7 @@ static int copy_data(struct archive *ar, struct archive *aw) {
     }
 }
 
-int copy_file(const char *src, int parent_pid) {
+int copy_file(const char *src, const char *container_name) {
     const int source_fd = open(src, O_RDONLY);
     if (source_fd == -1) {
         perror("open src file");
@@ -81,7 +81,7 @@ int copy_file(const char *src, int parent_pid) {
 
     // copy file to merged layer
     char target_path[256];
-    snprintf(target_path, sizeof(target_path), "/tmp/runner-%d/merged/%s", parent_pid, filename);
+    snprintf(target_path, sizeof(target_path), "/tmp/runner-%s/merged/%s", container_name, filename);
 
     const int destination_fd = open(target_path, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
     if (destination_fd < 0) {
@@ -200,8 +200,8 @@ static int unzip_fs(const char *path, const char *destination) {
     return 0;
 }
 
-int create_fs(const char *tarball_path, const int pid, int disk_limit) {
-    snprintf(base, sizeof(base), "/tmp/runner-%d", pid);
+int create_fs(const char *tarball_path, const char *container_name, const int disk_limit) {
+    snprintf(base, sizeof(base), "/tmp/runner-%s", container_name);
 
     // create base directory (/tmp/runner-<pid>)
     if (mkdir(base, 0755) == -1 && errno != EEXIST) {
@@ -219,7 +219,7 @@ int create_fs(const char *tarball_path, const int pid, int disk_limit) {
 
     // set base to lowerdir (/tmp/runner-<pid>/lower)
     char lower_directory[256];
-    snprintf(lower_directory, sizeof(lower_directory), "/tmp/runner-%d/lower", pid);
+    snprintf(lower_directory, sizeof(lower_directory), "/tmp/runner-%s/lower", container_name);
     if (mkdir(lower_directory, 0755) == -1) {
         perror("mkdir lowerdir");
         return -1;
@@ -330,18 +330,18 @@ int mount_fs() {
     return 0;
 }
 
-int unmount_fs(int pid) {
-    snprintf(merged, sizeof(merged), "/tmp/runner-%d/merged", pid);
+int unmount_fs(const char *container_name) {
+    snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
     char base_directory[256];
-    snprintf(base_directory, sizeof(base_directory), "/tmp/runner-%d", pid);
+    snprintf(base_directory, sizeof(base_directory), "/tmp/runner-%s", container_name);
 
     // unmount merged directory
-    if (umount2(merged, MNT_DETACH) == -1) {
+    if (umount2(merged, MNT_DETACH) == -1 && errno != EINVAL && errno != ENOENT) {
         perror("umount merged");
     }
 
     // unmount tmpfs
-    if (umount2(base_directory, MNT_DETACH) == -1) {
+    if (umount2(base_directory, MNT_DETACH) == -1 && errno != EINVAL && errno != ENOENT) {
         perror("umount tmpfs");
         return -1;
     }
@@ -349,13 +349,13 @@ int unmount_fs(int pid) {
     return 0;
 }
 
-int mount_overlayfs(int pid) {
+int mount_overlayfs(const char *container_name) {
     char lower_directory[512], upper_directory[512], work_directory[512], unzipped_fs[256];
 
-    snprintf(unzipped_fs, sizeof(unzipped_fs), "/tmp/runner-%d/lower", pid);
-    snprintf(upperdir, sizeof(upperdir), "/tmp/runner-%d/upper", pid);
-    snprintf(workdir, sizeof(workdir), "/tmp/runner-%d/work", pid);
-    snprintf(merged, sizeof(merged), "/tmp/runner-%d/merged", pid);
+    snprintf(unzipped_fs, sizeof(unzipped_fs), "/tmp/runner-%s/lower", container_name);
+    snprintf(upperdir, sizeof(upperdir), "/tmp/runner-%s/upper", container_name);
+    snprintf(workdir, sizeof(workdir), "/tmp/runner-%s/work", container_name);
+    snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
 
     snprintf(lower_directory, sizeof(lower_directory), "lowerdir=%s", unzipped_fs);
     snprintf(upper_directory, sizeof(upper_directory), "upperdir=%s", upperdir);

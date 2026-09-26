@@ -224,15 +224,19 @@ static struct seccomp_notif_resp syscall_emulator(const struct seccomp_notif *re
     return response;
 }
 
-void syscall_handler(const int notify_fd) {
+int syscall_handler(const int notify_fd) {
     struct seccomp_notif request = {};
     if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_RECV, &request) == -1) {
-        if (errno == ENOENT || errno == EINTR) {
-            return;
+        if (errno == EINTR) {
+            return 0;
+        }
+
+        if (errno == ENOENT) {
+            return -1;
         }
 
         perror("ioctl seccomp_notif");
-        return;
+        return -1;
     }
 
     printf("intercepted syscall %d (pid %d)\r\n", request.data.nr, request.pid);
@@ -245,5 +249,8 @@ void syscall_handler(const int notify_fd) {
     // send the response
     if (ioctl(notify_fd, SECCOMP_IOCTL_NOTIF_SEND, &response) == -1) {
         perror("ioctl seccomp_notif_resp");
+        return -1;
     }
+
+    return 0;
 }
