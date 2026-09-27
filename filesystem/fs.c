@@ -22,8 +22,6 @@ return -1; \
 } else { \
 printf("mkdir %s: already exists\n", path); \
 } \
-} else { \
-printf("mkdir %s: created\n", path); \
 } \
 } while(0)
 
@@ -109,12 +107,8 @@ int copy_file(const char *src, const char *container_name) {
 static int unzip_fs(const char *path, const char *destination) {
     struct archive_entry *entry;
 
-    printf("unpacking tarball %s\n", path);
-
     // go to the destination directory
     if (chdir(destination) != 0) {
-        printf("creating the destination directory\n");
-
         if (mkdir(destination, 0755) != 0) {
             perror("error creating the destination directory");
             return -1;
@@ -196,7 +190,7 @@ static int unzip_fs(const char *path, const char *destination) {
 
     umask(old_umask);
     sync();
-    printf("filesystem unzipped\n");
+
     return 0;
 }
 
@@ -405,6 +399,5 @@ int mount_overlayfs(const char *container_name) {
         return -1;
     }
 
-    printf("fuse-overlayfs mount succeeded\n");
     return 0;
 }

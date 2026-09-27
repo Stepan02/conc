@@ -106,7 +106,7 @@ static int container_runtime(void *arg) {
     char fips_path[512];
     snprintf(fips_path, sizeof(fips_path), "%s/proc/sys/crypto/fips_enabled", merged);
     if (access(fips_path, F_OK) == 0) {
-        int tmp_fd = open("/tmp/fips_zero", O_WRONLY | O_CREAT | O_TRUNC, 0644);
+        const int tmp_fd = open("/tmp/fips_zero", O_WRONLY | O_CREAT | O_TRUNC, 0644);
         if (tmp_fd != -1) {
             if (write(tmp_fd, "0\n", 2) != 2) {
                 perror("write fips_zero");
@@ -430,10 +430,11 @@ static int create_container(const int argc, char *argv[]) {
 
     const int shell_mode_fd = open(shell_mode_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (shell_mode_fd != -1) {
-        const char shell_mode_value = shell_mode ? '1' : '0';
+        const char *shell_mode_value = shell_mode ? "1\n" : "0\n";
 
-        if (write(shell_mode_fd, &shell_mode_value, 1) < 0) {
+        if (write(shell_mode_fd, shell_mode_value, 2) < 0) {
             perror("failed to set shell mode");
+            close(shell_mode_fd);
             return 1;
         }
 
@@ -474,12 +475,14 @@ static int create_container(const int argc, char *argv[]) {
     if (supervisor_pid < 0) {
         perror("failed to fork supervisor");
         close(socket_fd);
+        free(env_variables);
         return 1;
     }
 
     if (supervisor_pid > 0) {
         printf("%s\n", container_name);
         close(socket_fd);
+        free(env_variables);
         return 0;
     }
 
@@ -509,14 +512,14 @@ static int create_container(const int argc, char *argv[]) {
     if (shell_mode) {
         if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) < 0) {
             perror("openpty");
-            return 1;
+            exit(1);
         }
     }
 
     int sync_sockets[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sync_sockets) < 0) {
         perror("socketpair");
-        return 1;
+        exit(1);
     }
 
     // prepare clone flags
@@ -536,6 +539,16 @@ static int create_container(const int argc, char *argv[]) {
 
     close(sync_sockets[1]);
 
+    // save container pid
+    char container_pid_path[512];
+    snprintf(container_pid_path, sizeof(container_pid_path), "%s/container.pid", base_dir);
+    FILE *f_pid = fopen(container_pid_path, "w");
+
+    if (f_pid) {
+        fprintf(f_pid, "%d\n", child_pid);
+        fclose(f_pid);
+    }
+
     // map namespace
     if (map_user(child_pid) != 0) {
         perror("map_user");
@@ -551,7 +564,7 @@ static int create_container(const int argc, char *argv[]) {
 
     if (write(sync_sockets[0], "1", 1) != 1) {
         perror("write sync_sockets");
-        return 1;
+        exit(1);
     }
 
     // listen to child notifications for syscalls
@@ -560,7 +573,7 @@ static int create_container(const int argc, char *argv[]) {
 
     if (notify_fd < 0) {
         fprintf(stderr, "receive notify_fd\n");
-        return 1;
+        exit(1);
     }
 
     if (slave_fd != -1) {
@@ -587,21 +600,28 @@ static int create_container(const int argc, char *argv[]) {
     int status;
     waitpid(child_pid, &status, 0);
 
-    printf("\n");
-    printf("cleaning up resources\n");
+    // save container exit code
+    int exit_code = 0;
+    if (WIFEXITED(status)) {
+        exit_code = WEXITSTATUS(status);
+    } else if (WIFSIGNALED(status)) {
+        exit_code = 128 + WTERMSIG(status);
+    }
 
+    char exit_code_path[512];
+    snprintf(exit_code_path, sizeof(exit_code_path), "%s/exit-code", base_dir);
+    FILE *f_exit_code = fopen(exit_code_path, "w");
+    if (f_exit_code) {
+        fprintf(f_exit_code, "%d\n", exit_code);
+        fclose(f_exit_code);
+    }
+
+    // delete container.pid file
+    unlink(container_pid_path);
+
+    // clear environment variables
     free(env_variables);
 
-    if (unmount_fs(container_name) == -1) {
-        perror("unmount fs");
-    }
-
-    if (remove_directory(base_dir) == -1) {
-        perror("rmrf base");
-        printf("errno %d (%s)\n", errno, strerror(errno));
-    }
-
-    printf("overlayfs cleanup done\n");
     fflush(stdout);
 
     close(start_fd);
@@ -661,8 +681,6 @@ static int start_container() {
         perror("failed to receive fds from supervisor");
         return -1;
     }
-
-    printf("container '%s' started successfully\n", container_name);
 
     // start tty
     struct termios orig_termios, raw;
@@ -771,7 +789,43 @@ static int start_container() {
     return 0;
 }
 
+static int kill_container(const int signal_number) {
+    // get container pid
+    char container_pid_path[512];
+    snprintf(container_pid_path, sizeof(container_pid_path), "/tmp/runner-%s/container.pid", container_name);
+
+    const int fd = open(container_pid_path, O_RDONLY);
+    if (fd < 0) {
+        perror("container is not running");
+        return 1;
+    }
+
+    char pid_buffer[32] = {0};
+    const ssize_t bytes = read(fd, pid_buffer, sizeof(pid_buffer) - 1);
+    close(fd);
+
+    if (bytes <= 0) {
+        fprintf(stderr, "read container pid\n");
+        return 1;
+    }
+
+    const pid_t pid = (pid_t) strtol(pid_buffer, NULL, 10);
+
+    // send signal
+    if (kill(pid, signal_number) < 0) {
+        perror("send signal");
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(const int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "please specify a command\n");
+        return 1;
+    }
+
     // create command
     if (strcmp(argv[1], "create") == 0) {
         if (argc < 3) {
@@ -779,22 +833,37 @@ int main(const int argc, char *argv[]) {
             return 1;
         }
 
-        create_container(argc, argv);
+        return create_container(argc, argv);
     }
 
     // start command
-    else if  (strcmp(argv[1], "start") == 0) {
+    if (strcmp(argv[1], "start") == 0) {
         if (argc < 3) {
             fprintf(stderr, "missing container name\n");
             return 1;
         }
 
         snprintf(container_name, sizeof(container_name), "%s", argv[2]);
-        start_container();
-    } else {
-        fprintf(stderr, "unknown command %s\n", argv[1]);
-        return 1;
+        return start_container();
     }
 
-    return 0;
+    // kill command
+    if (strcmp(argv[1], "kill") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
+
+        snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+
+        int signal_number = 15; // default sigterm
+        if (argc > 3) {
+            signal_number = (int)strtol(argv[3], NULL, 10);
+        }
+
+        return kill_container(signal_number);
+    }
+
+    fprintf(stderr, "unknown command %s\n", argv[1]);
+    return 1;
 }
