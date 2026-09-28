@@ -820,6 +820,34 @@ static int kill_container(const int signal_number) {
     return 0;
 }
 
+static int delete_container() {
+    // check whether the container exists
+    char container_directory[512];
+    snprintf(container_directory, sizeof(container_directory), "/tmp/runner-%s", container_name);
+
+    if (access(container_directory, F_OK) < 0) {
+        fprintf(stderr, "container does not exist\n");
+        return 1;
+    }
+
+    // check whether the container is running
+    char container_pid_path[1024];
+    snprintf(container_pid_path, sizeof(container_pid_path), "%s/container.pid", container_directory);
+
+    if (access(container_pid_path, F_OK) == 0) {
+        fprintf(stderr, "container is running\n");
+        return 1;
+    }
+
+    // remove container directory
+    if (remove_directory(container_directory) < 0) {
+        perror("remove container directory");
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(const int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "please specify a command\n");
@@ -862,6 +890,18 @@ int main(const int argc, char *argv[]) {
         }
 
         return kill_container(signal_number);
+    }
+
+    // delete command
+    if (strcmp(argv[1], "delete") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
+
+        snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+
+        return delete_container();
     }
 
     fprintf(stderr, "unknown command %s\n", argv[1]);
