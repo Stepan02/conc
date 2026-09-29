@@ -480,6 +480,16 @@ static int create_container(const int argc, char *argv[]) {
     }
 
     if (supervisor_pid > 0) {
+        // save supervisor pid
+        char supervisor_pid_path[512];
+        snprintf(supervisor_pid_path, sizeof(supervisor_pid_path), "%s/supervisor.pid", base_dir);
+        FILE *f_pid = fopen(supervisor_pid_path, "w");
+
+        if (f_pid) {
+            fprintf(f_pid, "%d\n", supervisor_pid);
+            fclose(f_pid);
+        }
+
         printf("%s\n", container_name);
         close(socket_fd);
         free(env_variables);
@@ -837,6 +847,26 @@ static int delete_container() {
     if (access(container_pid_path, F_OK) == 0) {
         fprintf(stderr, "container is running\n");
         return 1;
+    }
+
+    // kill supervisor process
+    char supervisor_pid_path[1024];
+    snprintf(supervisor_pid_path, sizeof(supervisor_pid_path), "%s/supervisor.pid", container_directory);
+
+    const int fd = open(supervisor_pid_path, O_RDONLY);
+
+    if (fd >= 0) {
+        char pid_buffer[32] = {0};
+        const ssize_t bytes = read(fd, pid_buffer, sizeof(pid_buffer) - 1);
+        close(fd);
+
+        if (bytes <= 0) {
+            fprintf(stderr, "read supervisor pid\n");
+            return 1;
+        }
+
+        const pid_t pid = (pid_t) strtol(pid_buffer, NULL, 10);
+        kill(pid, SIGKILL);
     }
 
     // remove container directory
