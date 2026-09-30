@@ -11,53 +11,11 @@
 #include <dirent.h>
 #include <string.h>
 #include <archive.h>
-#include <archive_entry.h>
 
-#define STACK_SIZE (1024 * 1024)
-#define MKDIR_OR_FAIL(path, mode) do { \
-if (mkdir(path, mode) == -1) { \
-if (errno != EEXIST) { \
-perror("mkdir " #path); \
-return -1; \
-} else { \
-printf("mkdir %s: already exists\n", path); \
-} \
-} \
-} while(0)
+char merged[PATH_MAX + 32];
 
-static char upperdir[256];
-static char workdir[256];
-static char base[256]; // /tmp/runner-<name>
-char merged[256];
-
-static int copy_data(struct archive *ar, struct archive *aw) {
-    const void *buffer;
-    size_t size;
-    la_int64_t offset;
-
-    while (1) {
-        int reader = archive_read_data_block(ar, &buffer, &size, &offset);
-
-        if (reader == ARCHIVE_EOF) {
-            return ARCHIVE_OK;
-        }
-
-        if (reader < ARCHIVE_WARN) {
-            fprintf(stderr, "%s\n", archive_error_string(ar));
-            return reader;
-        }
-
-        reader = archive_write_data_block(aw, buffer, size, offset);
-
-        if (reader < ARCHIVE_OK) {
-            fprintf(stderr, "%s\n", archive_error_string(aw));
-            return reader;
-        }
-    }
-}
-
-int copy_file(const char *src, const char *container_name) {
-    const int source_fd = open(src, O_RDONLY);
+int copy_file(const char *source_path, const char *destination_path) {
+    const int source_fd = open(source_path, O_RDONLY);
     if (source_fd == -1) {
         perror("open src file");
         return -1;
@@ -69,19 +27,7 @@ int copy_file(const char *src, const char *container_name) {
         return -1;
     }
 
-    // get filename
-    const char *filename = strrchr(src, '/');
-    if (filename) {
-        filename++;
-    } else {
-        filename = src;
-    }
-
-    // copy file to merged layer
-    char target_path[256];
-    snprintf(target_path, sizeof(target_path), "/tmp/runner-%s/merged/%s", container_name, filename);
-
-    const int destination_fd = open(target_path, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
+    const int destination_fd = open(destination_path, O_WRONLY | O_CREAT | O_TRUNC, st.st_mode);
     if (destination_fd < 0) {
         perror("open target path");
         close(source_fd);
@@ -101,143 +47,6 @@ int copy_file(const char *src, const char *container_name) {
 
     close(source_fd);
     close(destination_fd);
-    return 0;
-}
-
-static int unzip_fs(const char *path, const char *destination) {
-    struct archive_entry *entry;
-
-    // go to the destination directory
-    if (chdir(destination) != 0) {
-        if (mkdir(destination, 0755) != 0) {
-            perror("error creating the destination directory");
-            return -1;
-        }
-
-        if (chdir(destination) != 0) {
-            perror("cannot change directory to destination");
-            return -1;
-        }
-    }
-
-    const mode_t old_umask = umask(0);
-
-    // select attributes to unzip
-    const int flags = ARCHIVE_EXTRACT_TIME | ARCHIVE_EXTRACT_PERM | ARCHIVE_EXTRACT_ACL | ARCHIVE_EXTRACT_FFLAGS | ARCHIVE_EXTRACT_SECURE_NODOTDOT |
-                      ARCHIVE_EXTRACT_UNLINK | ARCHIVE_EXTRACT_XATTR;
-
-    // setup tarball
-    struct archive *tarball = archive_read_new();
-    archive_read_support_format_all(tarball);
-    archive_read_support_filter_all(tarball);
-
-    // setup disk write
-    struct archive *ext = archive_write_disk_new();
-    archive_write_disk_set_options(ext, flags);
-    archive_write_disk_set_standard_lookup(ext);
-
-    if (archive_read_open_filename(tarball, path, 10240) != ARCHIVE_OK) {
-        fprintf(stderr, "%s\n", archive_error_string(tarball));
-
-        archive_read_free(tarball);
-        archive_write_free(ext);
-        umask(old_umask);
-        return -1;
-    }
-
-    int r;
-    while ((r = archive_read_next_header(tarball, &entry)) != ARCHIVE_EOF) {
-        if (r < ARCHIVE_OK) {
-            fprintf(stderr, "%s\n", archive_error_string(tarball));
-
-            if (r < ARCHIVE_WARN) {
-                break;
-            }
-        }
-
-        const char *current_path = archive_entry_pathname(entry);
-        if (current_path[0] == '/') {
-            archive_entry_set_pathname(entry, current_path + 1);
-        }
-
-        int reader = archive_write_header(ext, entry);
-
-        if (reader == ARCHIVE_WARN) {
-            fprintf(stderr, "%s\n", archive_error_string(ext));
-        }
-
-        if (reader < ARCHIVE_OK) {
-            fprintf(stderr, "%s\n", archive_error_string(ext));
-        } else {
-            reader = copy_data(tarball, ext);
-
-            if (reader < ARCHIVE_OK) {
-                fprintf(stderr, "%s\n", archive_error_string(ext));
-            }
-        }
-
-        reader = archive_write_finish_entry(ext);
-
-        if (reader < ARCHIVE_OK) {
-            fprintf(stderr, "%s\n", archive_error_string(ext));
-        }
-    }
-
-    archive_read_close(tarball);
-    archive_read_free(tarball);
-    archive_write_close(ext);
-    archive_write_free(ext);
-
-    umask(old_umask);
-    sync();
-
-    return 0;
-}
-
-int create_fs(const char *tarball_path, const char *container_name, const int disk_limit) {
-    snprintf(base, sizeof(base), "/tmp/runner-%s", container_name);
-
-    // create base directory (/tmp/runner-<pid>)
-    if (mkdir(base, 0755) == -1 && errno != EEXIST) {
-        perror("mkdir base directory");
-        return -1;
-    }
-
-    // set disk limit
-    char mount_options[64];
-    snprintf(mount_options, sizeof(mount_options), "size=%dM", disk_limit);
-    if (mount("tmpfs", base, "tmpfs", 0, mount_options) == -1) {
-        perror("mount tmpfs");
-        return -1;
-    }
-
-    // set base to lowerdir (/tmp/runner-<pid>/lower)
-    char lower_directory[256];
-    snprintf(lower_directory, sizeof(lower_directory), "/tmp/runner-%s/lower", container_name);
-    if (mkdir(lower_directory, 0755) == -1) {
-        perror("mkdir lowerdir");
-        return -1;
-    }
-
-    char current_working_directory[1024];
-    if (getcwd(current_working_directory, sizeof(current_working_directory)) == NULL) {
-        perror("getcwd");
-        return -1;
-    }
-
-    if (unzip_fs(tarball_path, lower_directory) == -1) {
-        perror("unzip_fs");
-        if (chdir(current_working_directory) == -1) {
-            perror("chdir cwd");
-        }
-        return -1;
-    }
-
-    if (chdir(current_working_directory) != 0) {
-        perror("chdir back to cwd");
-        return -1;
-    }
-
     return 0;
 }
 
@@ -292,41 +101,9 @@ int remove_directory(const char *path) {
     return r;
 }
 
-int mount_fs() {
-    char path[512];
-
-    snprintf(path, sizeof(path), "%s/proc", merged);
-    MKDIR_OR_FAIL(path, 0555);
-    if (mount("proc", path, "proc", 0, NULL) == -1) {
-        perror("mount /proc");
-        return -1;
-    }
-
-    snprintf(path, sizeof(path), "%s/tmp", merged);
-    MKDIR_OR_FAIL(path, 0777);
-    if (mount("tmpfs", path, "tmpfs", 0, "size=64M") == -1) {
-        perror("mount /tmp");
-        return -1;
-    }
-
-    snprintf(path, sizeof(path), "%s/dev", merged);
-    MKDIR_OR_FAIL(path, 0755);
-    if (mount("tmpfs", path, "tmpfs", 0, NULL) == -1) {
-        perror("mount /dev as tmpfs");
-        return -1;
-    }
-
-    if (mount("/dev/pts", path, NULL, MS_BIND, NULL) == -1) {
-        perror("bind mount /dev/pts");
-        return -1;
-    }
-
-    return 0;
-}
-
 int unmount_fs(const char *container_name) {
     snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
-    char base_directory[256];
+    char base_directory[PATH_MAX];
     snprintf(base_directory, sizeof(base_directory), "/tmp/runner-%s", container_name);
 
     // unmount merged directory
@@ -343,27 +120,58 @@ int unmount_fs(const char *container_name) {
     return 0;
 }
 
-int mount_overlayfs(const char *container_name) {
-    char lower_directory[512], upper_directory[512], work_directory[512], unzipped_fs[256];
+int mount_overlayfs(const char *rootfs_path, const char *container_name, const int disk_limit) {
+    char base_directory[PATH_MAX];
+    char upper_directory[PATH_MAX + 32];
+    char work_directory[PATH_MAX + 32];
 
-    snprintf(unzipped_fs, sizeof(unzipped_fs), "/tmp/runner-%s/lower", container_name);
-    snprintf(upperdir, sizeof(upperdir), "/tmp/runner-%s/upper", container_name);
-    snprintf(workdir, sizeof(workdir), "/tmp/runner-%s/work", container_name);
-    snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
+    snprintf(base_directory, sizeof(base_directory), "/tmp/runner-%s", container_name);
+    snprintf(upper_directory, sizeof(upper_directory), "%s/upper", base_directory);
+    snprintf(work_directory, sizeof(work_directory), "%s/work", base_directory);
+    snprintf(merged, sizeof(merged), "%s/merged", base_directory);
 
-    snprintf(lower_directory, sizeof(lower_directory), "lowerdir=%s", unzipped_fs);
-    snprintf(upper_directory, sizeof(upper_directory), "upperdir=%s", upperdir);
-    snprintf(work_directory, sizeof(work_directory), "workdir=%s", workdir);
+    // create base directory
+    if (mkdir(base_directory, 0700) == -1 && errno != EEXIST) {
+        perror("mkdir base");
+        return -1;
+    }
 
-    MKDIR_OR_FAIL(upperdir, 0755);
-    MKDIR_OR_FAIL(workdir, 0755);
-    MKDIR_OR_FAIL(merged, 0755);
+    // set disk limit
+    char mount_options[64];
+    snprintf(mount_options, sizeof(mount_options), "size=%dM", disk_limit);
+    if (mount("tmpfs", base_directory, "tmpfs", 0, mount_options) == -1) {
+        perror("mount tmpfs");
+        return -1;
+    }
+
+    if (mkdir(upper_directory, 0755) == -1) {
+        perror("mkdir upperdir");
+        return -1;
+    }
+
+    if (mkdir(work_directory, 0755) == -1) {
+        perror("mkdir workdir");
+        return -1;
+    }
+
+    if (mkdir(merged, 0755) == -1) {
+        perror("mkdir merged");
+        return -1;
+    }
 
     struct stat st_base;
-    if (stat(base, &st_base) == -1) {
+    if (stat(base_directory, &st_base) == -1) {
         perror("stat base dir");
         return -1;
     }
+
+    char lower_directory_layer[PATH_MAX + 32];
+    char upper_directory_layer[PATH_MAX + 64];
+    char work_directory_layer[PATH_MAX + 64];
+
+    snprintf(lower_directory_layer, sizeof(lower_directory_layer), "lowerdir=%s", rootfs_path);
+    snprintf(upper_directory_layer, sizeof(upper_directory_layer), "upperdir=%s", upper_directory);
+    snprintf(work_directory_layer, sizeof(work_directory_layer), "workdir=%s", work_directory);
 
     pid_t fpid = fork(); // fuse-overlayfs pid
     if (fpid == -1) {
@@ -373,14 +181,16 @@ int mount_overlayfs(const char *container_name) {
 
     if (fpid == 0) {
         execlp("fuse-overlayfs", "fuse-overlayfs",
-               "-o", lower_directory,
-               "-o", upper_directory,
-               "-o", work_directory,
+               "-o", lower_directory_layer,
+               "-o", upper_directory_layer,
+               "-o", work_directory_layer,
                merged, (char *) NULL);
 
         perror("execlp fuse-overlayfs failed");
         _exit(1);
     }
+
+    waitpid(fpid, NULL, 0);
 
     struct stat st_merged;
     int mounted = 0;

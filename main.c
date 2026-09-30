@@ -31,9 +31,6 @@ static char *default_command[] = {"/bin/sh", NULL};
 // global hostname variable
 static char hostname[64];
 
-// global tarball path variable
-static char tarball_path[1024];
-
 // global disk_limit variable
 static int disk_limit = 1024; // mb
 
@@ -73,27 +70,57 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
-    if (create_fs(tarball_path, container_name, disk_limit) != 0) {
-        fprintf(stderr, "create fs failed\n");
+    // resolve rootfs path
+    char current_path[PATH_MAX];
+    if (getcwd(current_path, sizeof(current_path)) == NULL) {
+        fprintf(stderr, "failed to get current working directory\n");
         _exit(1);
     }
 
-    if (mount_overlayfs(container_name) == -1) {
+    char rootfs_path[PATH_MAX + 64];
+    snprintf(rootfs_path, sizeof(rootfs_path), "%s/rootfs", current_path);
+
+    // check rootfs
+    if (access(rootfs_path, F_OK) < 0) {
+        fprintf(stderr, "rootfs not found in %s\n", rootfs_path);
+        _exit(1);
+    }
+
+    if (mount_overlayfs(rootfs_path, container_name, disk_limit) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
         _exit(1);
     }
 
+    snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
+
     // copy files if provided
     for (int i = 0; i < file_count; i++) {
-        if (copy_file(file_sources[i], container_name) != 0) {
+        // get filename
+        const char *filename = strrchr(file_sources[i], '/');
+        if (filename) {
+            filename++;
+        } else {
+            filename = file_sources[i];
+        }
+
+        // get target path
+        char target_path[PATH_MAX * 2];
+        snprintf(target_path, sizeof(target_path), "%s/%s", merged, filename);
+
+        if (copy_file(file_sources[i], target_path) != 0) {
             fprintf(stderr, "copy failed\n");
             _exit(1);
         }
     }
 
-    snprintf(merged, sizeof(merged), "/tmp/runner-%s/merged", container_name);
+    // check merged mountpoint
+    if (mount(merged, merged, NULL, MS_BIND, NULL) == -1) {
+        perror("mount bind merged");
+        _exit(1);
+    }
 
-    char path[512];
+    // mount procfs
+    char path[PATH_MAX + 64];
     snprintf(path, sizeof(path), "%s/proc", merged);
     if (mount("proc", path, "proc", 0, NULL) == -1) {
         perror("mount /proc");
@@ -103,7 +130,7 @@ static int container_runtime(void *arg) {
     mkdir(path, 0777);
 
     // mask fips
-    char fips_path[512];
+    char fips_path[PATH_MAX + 64];
     snprintf(fips_path, sizeof(fips_path), "%s/proc/sys/crypto/fips_enabled", merged);
     if (access(fips_path, F_OK) == 0) {
         const int tmp_fd = open("/tmp/fips_zero", O_WRONLY | O_CREAT | O_TRUNC, 0644);
@@ -118,13 +145,13 @@ static int container_runtime(void *arg) {
     }
 
     // mask sysrq-trigger
-    char sysrq_trigger_path[512];
+    char sysrq_trigger_path[PATH_MAX + 64];
     snprintf(sysrq_trigger_path, sizeof(sysrq_trigger_path), "%s/proc/sysrq-trigger", merged);
     if (mount("/dev/null", sysrq_trigger_path, NULL, MS_BIND, NULL) == -1) {
         perror("mask sysrq-trigger");
     }
 
-    char sys_path[512];
+    char sys_path[PATH_MAX + 64];
     snprintf(sys_path, sizeof(sys_path), "%s/proc/sys", merged);
     if (mount(sys_path, sys_path, NULL, MS_BIND | MS_REC, NULL) == 0) {
         mount(sys_path, sys_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL);
@@ -133,6 +160,7 @@ static int container_runtime(void *arg) {
     snprintf(path, sizeof(path), "%s/dev", merged);
     mkdir(path, 0755);
 
+    // mount devices
     for (int i = 0; i < 5; i++) {
         const char *sys_devs[] = {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"};
         snprintf(path, sizeof(path), "%s%s", merged, sys_devs[i]);
@@ -163,12 +191,6 @@ static int container_runtime(void *arg) {
     snprintf(put_old, sizeof(put_old), "%s/old_root", merged);
     mkdir(put_old, 0700);
     */
-
-    // check merged mountpoint
-    if (mount(merged, merged, NULL, MS_BIND | MS_REC, NULL) == -1) {
-        perror("mount bind merged");
-        _exit(1);
-    }
 
     // change root
     if (chdir(merged) == -1) {
@@ -326,12 +348,6 @@ static int create_container(const int argc, char *argv[]) {
             shell_mode = 0;
         } else if (strcmp(argv[i], "--share-net") == 0 || strcmp(argv[i], "-sn") == 0) {
             share_net = 1;
-        } else if (strcmp(argv[i], "--tar") == 0 || strcmp(argv[i], "-t") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            snprintf(tarball_path, sizeof(tarball_path), "%s", argv[++i]);
         } else if (strcmp(argv[i], "--ram") == 0 || strcmp(argv[i], "-r") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "missing argument for %s\n", argv[i]);
@@ -407,12 +423,6 @@ static int create_container(const int argc, char *argv[]) {
     // /bin/sh fallback for empty commands
     if (command == NULL) {
         command = default_command;
-    }
-
-    // tarball path is required
-    if (tarball_path[0] == '\0') {
-        fprintf(stderr, "missing tarball path (--tar <path>)\n");
-        return 1;
     }
 
     // prepare container base directory
