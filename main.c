@@ -59,6 +59,7 @@ static int container_runtime(void *arg) {
     const int share_net = args[0];
     const int sync_sock = args[1];
     const int slave_fd = args[2];
+    const int readonly_fs = args[3];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -246,6 +247,13 @@ static int container_runtime(void *arg) {
         }
     }
 
+    // set filesystem as read-only if read-only flag is provided
+    if (readonly_fs) {
+        if (mount(NULL, "/", NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) == -1) {
+            perror("remount read-only rootfs");
+        }
+    }
+
     // setup hostname and env variables
     if (sethostname(hostname, strlen(hostname)) == -1) {
         perror("hostname");
@@ -338,6 +346,7 @@ static int create_container(const int argc, char *argv[]) {
     int cpu_limit = 100000; // us
     int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
+    int readonly_fs = 0; // filesystem is writable by default
 
     // save container name
     snprintf(container_name, sizeof(container_name), "%s", argv[2]);
@@ -372,6 +381,8 @@ static int create_container(const int argc, char *argv[]) {
                 return 1;
             }
             disk_limit = (int) strtol(argv[++i], NULL, 10);
+        } else if (strcmp(argv[i], "--readonly-fs") == 0 || strcmp(argv[i], "-rfs") == 0) {
+            readonly_fs = 1;
         } else if (strcmp(argv[i], "--env") == 0 || strcmp(argv[i], "-e") == 0) {
             if (i + 1 >= argc) {
                 fprintf(stderr, "missing argument for %s\n", argv[i]);
@@ -549,7 +560,7 @@ static int create_container(const int argc, char *argv[]) {
         flags |= CLONE_NEWNET;
     }
 
-    int child_args[3] = {share_net, sync_sockets[1], slave_fd};
+    int child_args[4] = {share_net, sync_sockets[1], slave_fd, readonly_fs};
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
 
     if (child_pid == -1) {
