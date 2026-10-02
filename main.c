@@ -15,6 +15,7 @@
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <grp.h>
+#include "config/parser.h"
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
 #include "sandbox/security.h"
@@ -340,7 +341,7 @@ static int container_runtime(void *arg) {
     return 0;
 }
 
-static int create_container(const int argc, char *argv[]) {
+static int create_container(char *argv[]) {
     // default values
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
@@ -351,84 +352,31 @@ static int create_container(const int argc, char *argv[]) {
     // save container name
     snprintf(container_name, sizeof(container_name), "%s", argv[2]);
 
-    // resolve arguments
-    for (int i = 3; i < argc; i++) {
-        if (strcmp(argv[i], "--no-shell") == 0 || strcmp(argv[i], "-nsh") == 0) {
-            shell_mode = 0;
-        } else if (strcmp(argv[i], "--share-net") == 0 || strcmp(argv[i], "-sn") == 0) {
-            share_net = 1;
-        } else if (strcmp(argv[i], "--ram") == 0 || strcmp(argv[i], "-r") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            ram_limit = (int) strtol(argv[++i], NULL, 10);
-        } else if (strcmp(argv[i], "--cpu") == 0 || strcmp(argv[i], "-c") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            cpu_limit = (int) strtol(argv[++i], NULL, 10);
-        } else if (strcmp(argv[i], "--hostname") == 0 || strcmp(argv[i], "-hn") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            snprintf(custom_hostname, sizeof(custom_hostname), "%s", argv[++i]);
-        } else if (strcmp(argv[i], "--disk") == 0 || strcmp(argv[i], "-d") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            disk_limit = (int) strtol(argv[++i], NULL, 10);
-        } else if (strcmp(argv[i], "--readonly-fs") == 0 || strcmp(argv[i], "-rfs") == 0) {
-            readonly_fs = 1;
-        } else if (strcmp(argv[i], "--env") == 0 || strcmp(argv[i], "-e") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            env_variables = realloc(env_variables, (env_variables_count + 1) * sizeof(char *));
-            env_variables[env_variables_count++] = argv[++i];
-        } else if (strcmp(argv[i], "--user") == 0 || strcmp(argv[i], "-u") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
+    // read container config
+    config_t config;
 
-            // parse uid and gid
-            char *mapping = strdup(argv[++i]);
-            char *colon = strchr(mapping, ':');
+    if (read_config(&config) < 0) {
+        perror("read config");
+        return 1;
+    }
 
-            if (colon != NULL) {
-                *colon = '\0'; // split string to two halves
-                uid = (int) strtol(mapping, NULL, 10);
-                gid = (int) strtol(colon + 1, NULL, 10);
-            } else {
-                // set gid same as uid if only uid was provided
-                uid = (int) strtol(mapping, NULL, 10);
-                gid = uid;
-            }
+    shell_mode = config.shell_mode;
+    share_net = config.share_net;
+    readonly_fs = config.readonly_fs;
 
-            free(mapping);
-        } else if (strcmp(argv[i], "--copy") == 0 || strcmp(argv[i], "-cp") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "missing argument for %s\n", argv[i]);
-                return 1;
-            }
-            if (file_count >= 10) {
-                fprintf(stderr, "too many files (10 max)\n");
-                return 1;
-            }
-            snprintf(file_sources[file_count++], sizeof(file_sources[0]), "%s", argv[++i]);
-        } else if (argv[i][0] != '-') {
-            // parse container command
-            command = &argv[i];
-            break;
-        } else {
-            fprintf(stderr, "unknown option: %s\n", argv[i]);
-            return 1;
-        }
+    if (config.custom_hostname[0] != '\0') {
+        snprintf(custom_hostname, sizeof(custom_hostname), "%s", config.custom_hostname);
+    }
+
+    ram_limit = config.ram_limit;
+    cpu_limit = config.cpu_limit;
+
+    uid = config.uid;
+    gid = config.gid;
+
+    for (int i = 0; i < config.env_variables_count; i++) {
+        env_variables = calloc(config.env_variables_count + 1, sizeof(char*));
+        env_variables[i] = config.env_variables[i];
     }
 
     // /bin/sh fallback for empty commands
@@ -514,6 +462,7 @@ static int create_container(const int argc, char *argv[]) {
         printf("%s\n", container_name);
         close(socket_fd);
         free(env_variables);
+        free_config(&config);
         return 0;
     }
 
@@ -650,8 +599,9 @@ static int create_container(const int argc, char *argv[]) {
     // delete container.pid file
     unlink(container_pid_path);
 
-    // clear environment variables
+    // clear environment variables and config
     free(env_variables);
+    free_config(&config);
 
     fflush(stdout);
 
@@ -912,7 +862,7 @@ int main(const int argc, char *argv[]) {
             return 1;
         }
 
-        return create_container(argc, argv);
+        return create_container(argv);
     }
 
     // start command

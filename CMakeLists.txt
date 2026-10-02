@@ -18,7 +18,11 @@ add_executable(runner main.c
         sandbox/user.h
         sandbox/user.c
         sandbox/ipc.c
-        sandbox/ipc.h)
+        sandbox/ipc.h
+        config/parser.c
+        config/parser.h
+        libs/cJSON.c
+        libs/cJSON.h)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED libsystemd)
