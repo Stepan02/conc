@@ -3,7 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-#include <limits.h>
+#include <linux/limits.h>
+#include <stdint.h>
 #include "../libs/cJSON.h"
 
 int read_config(config_t *config) {
@@ -18,6 +19,7 @@ int read_config(config_t *config) {
     snprintf(config_path, sizeof(config_path), "%s/config.json", current_working_directory);
 
     // clear config_t
+    free_config(config);
     memset(config, 0, sizeof(config_t));
 
     // shell runtime is enabled by default (1 = enabled, 0 = disabled)
@@ -79,6 +81,56 @@ int read_config(config_t *config) {
         snprintf(config->custom_hostname, sizeof(config->custom_hostname), "%s", custom_hostname->valuestring);
     }
 
+    const cJSON *command = cJSON_GetObjectItem(config_file, "command");
+    if (cJSON_IsArray(command)) {
+        const int count = cJSON_GetArraySize(command);
+
+        if (count > 0) {
+            config->command = calloc(count + 1, sizeof(char *)); // args + null termination
+            if (!config->command) {
+                perror("failed to allocate command");
+                cJSON_Delete(config_file);
+
+                return -1;
+            }
+
+            config->command_args_count = 0;
+
+            const cJSON *command_arg = NULL;
+            cJSON_ArrayForEach(command_arg, command) {
+                if (cJSON_IsString(command_arg) && command_arg->valuestring) {
+                    config->command[config->command_args_count++] = strdup(command_arg->valuestring);
+                }
+            }
+
+            config->command[config->command_args_count] = NULL; // add null termination
+        }
+    }
+
+    // empty command fallback
+    if (config->command == NULL || config->command_args_count == 0) {
+        if (config->command != NULL) {
+            for (int i = 0; config->command[i] != NULL; i++) {
+                free(config->command[i]);
+            }
+
+            free(config->command);
+            config->command = NULL;
+        }
+
+        config->command = calloc(2, sizeof(char *));
+        if (!config->command) {
+            perror("failed to allocate command");
+            cJSON_Delete(config_file);
+
+            return -1;
+        }
+
+        config->command[0] = strdup("/bin/sh");
+        config->command[1] = NULL;
+        config->command_args_count = 1;
+    }
+
     const cJSON *uid = cJSON_GetObjectItemCaseSensitive(config_file, "uid");
     if (cJSON_IsNumber(uid)) {
         config->uid = (uint32_t)uid->valuedouble;
@@ -102,16 +154,26 @@ int read_config(config_t *config) {
     const cJSON *env_variables = cJSON_GetObjectItemCaseSensitive(config_file, "env");
     if (cJSON_IsArray(env_variables)) {
         const int count = cJSON_GetArraySize(env_variables);
+
         if (count > 0) {
-            config->env_variables = calloc(count, sizeof(char *));
+            config->env_variables = calloc(count + 1, sizeof(char *)); // variables + null termination
+            if (!config->env_variables) {
+                perror("failed to allocate env variables");
+                cJSON_Delete(config_file);
+
+                return -1;
+            }
+
             config->env_variables_count = 0;
 
-            cJSON *variable = NULL;
+            const cJSON *variable = NULL;
             cJSON_ArrayForEach(variable, env_variables) {
                 if (cJSON_IsString(variable) && variable->valuestring) {
                     config->env_variables[config->env_variables_count++] = strdup(variable->valuestring);
                 }
             }
+
+            config->env_variables[config->env_variables_count] = NULL; // add null termination
         }
     }
 
@@ -127,11 +189,20 @@ void free_config(config_t *config) {
     }
 
     if (config->env_variables) {
-        for (size_t i = 0; i < config->env_variables_count; i++) {
+        for (int i = 0; config->env_variables[i] != NULL; i++) {
             free(config->env_variables[i]);
         }
 
         free(config->env_variables);
         config->env_variables = NULL;
+    }
+
+    if (config->command != NULL) {
+        for (int i = 0; config->command[i] != NULL; i++) {
+            free(config->command[i]);
+        }
+
+        free(config->command);
+        config->command = NULL;
     }
 }

@@ -1,3 +1,4 @@
+#include <elf.h>
 #include <sched.h>
 #include <sys/wait.h>
 #include <sys/mount.h>
@@ -25,9 +26,6 @@
 
 // global container name variable
 static char container_name[64];
-
-// global default container command
-static char *default_command[] = {"/bin/sh", NULL};
 
 // global hostname variable
 static char hostname[64];
@@ -353,7 +351,7 @@ static int create_container(char *argv[]) {
     snprintf(container_name, sizeof(container_name), "%s", argv[2]);
 
     // read container config
-    config_t config;
+    config_t config = {0};
 
     if (read_config(&config) < 0) {
         perror("read config");
@@ -379,10 +377,7 @@ static int create_container(char *argv[]) {
         env_variables[i] = config.env_variables[i];
     }
 
-    // /bin/sh fallback for empty commands
-    if (command == NULL) {
-        command = default_command;
-    }
+    command = config.command;
 
     // prepare container base directory
     char base_dir[256];
