@@ -5,6 +5,7 @@
 #include <unistd.h>
 #include <linux/limits.h>
 #include <stdint.h>
+#include <sched.h>
 #include "../libs/cJSON.h"
 
 int read_config(config_t *config) {
@@ -64,11 +65,6 @@ int read_config(config_t *config) {
     const cJSON *shell_mode = cJSON_GetObjectItemCaseSensitive(config_file, "shell");
     if (cJSON_IsBool(shell_mode)) {
         config->shell_mode = cJSON_IsTrue(shell_mode);
-    }
-
-    const cJSON *share_net = cJSON_GetObjectItemCaseSensitive(config_file, "shareNet");
-    if (cJSON_IsBool(share_net)) {
-        config->share_net = cJSON_IsTrue(share_net);
     }
 
     const cJSON *readonly_fs = cJSON_GetObjectItemCaseSensitive(config_file, "readonlyFilesystem");
@@ -174,6 +170,54 @@ int read_config(config_t *config) {
             }
 
             config->env_variables[config->env_variables_count] = NULL; // add null termination
+        }
+    }
+
+    const cJSON *namespaces = cJSON_GetObjectItemCaseSensitive(config_file, "namespaces");
+    if (cJSON_IsArray(namespaces)) {
+        const cJSON *namespace = NULL;
+
+        cJSON_ArrayForEach(namespace, namespaces) {
+            if (!cJSON_IsObject(namespace)) {
+                continue;
+            }
+
+            const cJSON *type = cJSON_GetObjectItemCaseSensitive(namespace, "type");
+            if (cJSON_IsString(type) && type->valuestring) {
+                const char *value = type->valuestring;
+
+                if (strcmp(value, "pid") == 0) {
+                    config->namespaces |= CLONE_NEWPID;
+                }
+
+                else if (strcmp(value, "network") == 0) {
+                    config->namespaces |= CLONE_NEWNET;
+                }
+
+                else if (strcmp(value, "mount") == 0) {
+                    config->namespaces |= CLONE_NEWNS;
+                }
+
+                else if (strcmp(value, "ipc") == 0) {
+                    config->namespaces |= CLONE_NEWIPC;
+                }
+
+                else if (strcmp(value, "uts") == 0) {
+                    config->namespaces |= CLONE_NEWUTS;
+                }
+
+                else if (strcmp(value, "user") == 0) {
+                    config->namespaces |= CLONE_NEWUSER;
+                }
+
+                else if (strcmp(value, "cgroup") == 0) {
+                    config->namespaces |= CLONE_NEWCGROUP;
+                }
+
+                else if (strcmp(value, "time") == 0) {
+                    config->namespaces |= CLONE_NEWTIME;
+                }
+            }
         }
     }
 

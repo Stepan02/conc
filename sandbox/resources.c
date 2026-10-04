@@ -11,7 +11,14 @@ int allocate_resources(const pid_t child_pid, const int ram_mb, const uint64_t c
     sd_bus_error error = SD_BUS_ERROR_NULL;
 
     // connect to dbus
-    int r = sd_bus_default_user(&bus);
+    int r;
+    if (getuid() == 0) {
+        // use system bus if running as root
+        r = sd_bus_default_system(&bus);
+    } else {
+        r = sd_bus_default_user(&bus);
+    }
+
     if (r < 0) {
         fprintf(stderr, "d-bus: %s\n", strerror(-r));
         return r;

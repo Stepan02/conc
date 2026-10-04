@@ -343,7 +343,6 @@ static int create_container(char *argv[]) {
     // default values
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
-    int share_net = 0; // network is isolated by default
     char custom_hostname[64] = "";
     int readonly_fs = 0; // filesystem is writable by default
 
@@ -359,8 +358,15 @@ static int create_container(char *argv[]) {
     }
 
     shell_mode = config.shell_mode;
-    share_net = config.share_net;
     readonly_fs = config.readonly_fs;
+
+    int share_net;
+
+    if (config.namespaces & CLONE_NEWNET) {
+        share_net = 0;
+    } else {
+        share_net = 1;
+    }
 
     if (config.custom_hostname[0] != '\0') {
         snprintf(custom_hostname, sizeof(custom_hostname), "%s", config.custom_hostname);
@@ -372,9 +378,12 @@ static int create_container(char *argv[]) {
     uid = config.uid;
     gid = config.gid;
 
-    for (int i = 0; i < config.env_variables_count; i++) {
+    if (config.env_variables_count > 0) {
         env_variables = calloc(config.env_variables_count + 1, sizeof(char*));
-        env_variables[i] = config.env_variables[i];
+
+        for (int i = 0; i < config.env_variables_count; i++) {
+            env_variables[i] = config.env_variables[i];
+        }
     }
 
     command = config.command;
@@ -497,15 +506,9 @@ static int create_container(char *argv[]) {
         exit(1);
     }
 
-    // prepare clone flags
-    int flags = CLONE_NEWUTS | CLONE_NEWIPC | CLONE_NEWNS | CLONE_NEWPID | CLONE_NEWCGROUP | CLONE_NEWUSER;
-
-    if (!share_net) {
-        flags |= CLONE_NEWNET;
-    }
-
+    // clone child
     int child_args[4] = {share_net, sync_sockets[1], slave_fd, readonly_fs};
-    const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, flags | SIGCHLD, child_args);
+    const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
     if (child_pid == -1) {
         perror("clone");
@@ -525,15 +528,25 @@ static int create_container(char *argv[]) {
     }
 
     // map namespace
-    if (map_user(child_pid) != 0) {
-        perror("map_user");
-        close(sync_sockets[0]);
-        exit(1);
+    if (config.namespaces & CLONE_NEWUSER) {
+        if (map_user(child_pid) != 0) {
+            perror("map_user");
+            close(sync_sockets[0]);
+            exit(1);
+        }
     }
 
     // create and assign cgroup
     if (allocate_resources(child_pid, ram_limit, cpu_limit) < 0) {
         fprintf(stderr, "allocate_resources\n");
+
+        // kill child
+        kill(child_pid, SIGKILL);
+        waitpid(child_pid, NULL, 0);
+
+        close(sync_sockets[0]);
+        close(start_fd);
+
         exit(1);
     }
 
@@ -548,6 +561,11 @@ static int create_container(char *argv[]) {
 
     if (notify_fd < 0) {
         fprintf(stderr, "receive notify_fd\n");
+
+        int status;
+        waitpid(child_pid, &status, 0);
+        close(start_fd);
+
         exit(1);
     }
 

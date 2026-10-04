@@ -4,7 +4,6 @@
 
 typedef struct {
     bool shell_mode;
-    bool share_net;
     bool readonly_fs;
     char custom_hostname[256];
     int uid;
@@ -15,6 +14,7 @@ typedef struct {
     int env_variables_count;
     char **command;
     int command_args_count;
+    int namespaces;
 } config_t;
 
 int read_config(config_t *config);
