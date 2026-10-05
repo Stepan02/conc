@@ -15,6 +15,7 @@ typedef struct {
     char **command;
     int command_args_count;
     int namespaces;
+    int pid_limit;
 } config_t;
 
 int read_config(config_t *config);

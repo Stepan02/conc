@@ -537,7 +537,7 @@ static int create_container(char *argv[]) {
     }
 
     // create and assign cgroup
-    if (allocate_resources(child_pid, ram_limit, cpu_limit) < 0) {
+    if (allocate_resources(child_pid, ram_limit, cpu_limit, config.pid_limit) < 0) {
         fprintf(stderr, "allocate_resources\n");
 
         // kill child

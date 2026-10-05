@@ -5,7 +5,7 @@
 #include <stdint.h>
 #include <string.h>
 
-int allocate_resources(const pid_t child_pid, const int ram_mb, const uint64_t cpu_us) {
+int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint64_t cpu_us, const uint64_t pid_limit) {
     sd_bus *bus = NULL;
     sd_bus_message *m = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -52,14 +52,14 @@ int allocate_resources(const pid_t child_pid, const int ram_mb, const uint64_t c
 
     sd_bus_message_open_container(m, 'v', "au");
     sd_bus_message_open_container(m, 'a', "u");
-    uint32_t pid = (uint32_t) child_pid;
+    const uint32_t pid = (uint32_t) child_pid;
     sd_bus_message_append(m, "u", pid);
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
 
     // set ram limit
-    uint64_t memory_bytes = (uint64_t) ram_mb * 1024 * 1024;
+    const uint64_t memory_bytes = ram_mb * 1024 * 1024;
     sd_bus_message_open_container(m, 'r', "sv");
     sd_bus_message_append(m, "s", "MemoryMax");
     sd_bus_message_open_container(m, 'v', "t");
@@ -68,7 +68,7 @@ int allocate_resources(const pid_t child_pid, const int ram_mb, const uint64_t c
     sd_bus_message_close_container(m);
 
     // set ram high limit to 90% of ram limit
-    uint64_t memory_high_bytes = (memory_bytes * 9) / 10;
+    const uint64_t memory_high_bytes = (memory_bytes * 9) / 10;
     sd_bus_message_open_container(m, 'r', "sv");
     sd_bus_message_append(m, "s", "MemoryHigh");
     sd_bus_message_open_container(m, 'v', "t");
@@ -84,11 +84,12 @@ int allocate_resources(const pid_t child_pid, const int ram_mb, const uint64_t c
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
 
-    // set pid limit to 64
+    // set pid limit
+    const uint64_t pid_max = (pid_limit > 0) ? pid_limit : UINT64_MAX;
     sd_bus_message_open_container(m, 'r', "sv");
     sd_bus_message_append(m, "s", "TasksMax");
     sd_bus_message_open_container(m, 'v', "t");
-    sd_bus_message_append(m, "t", (uint64_t) 64);
+    sd_bus_message_append(m, "t", pid_max);
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
 

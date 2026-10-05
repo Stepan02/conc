@@ -173,6 +173,16 @@ int read_config(config_t *config) {
         }
     }
 
+    config->pid_limit = 0;
+
+    const cJSON *pids = cJSON_GetObjectItemCaseSensitive(config_file, "pids");
+    if (cJSON_IsObject(pids)) {
+        const cJSON *limit = cJSON_GetObjectItemCaseSensitive(pids, "limit");
+        if (cJSON_IsNumber(limit)) {
+            config->pid_limit = (uint64_t) limit->valuedouble;
+        }
+    }
+
     const cJSON *namespaces = cJSON_GetObjectItemCaseSensitive(config_file, "namespaces");
     if (cJSON_IsArray(namespaces)) {
         const cJSON *namespace = NULL;
