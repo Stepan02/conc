@@ -1,6 +1,7 @@
 #ifndef SANDBOX_PARSER_H
 #define SANDBOX_PARSER_H
 #include <stdbool.h>
+#include <linux/limits.h>
 
 typedef struct {
     bool shell_mode;
@@ -16,6 +17,7 @@ typedef struct {
     int command_args_count;
     int namespaces;
     int pid_limit;
+    char cwd[PATH_MAX];
 } config_t;
 
 int read_config(config_t *config);

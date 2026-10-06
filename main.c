@@ -30,6 +30,9 @@ static char container_name[64];
 // global hostname variable
 static char hostname[64];
 
+// global current working directory variable
+static char cwd[PATH_MAX] = "/"; // default directory
+
 // global disk_limit variable
 static int disk_limit = 1024; // mb
 
@@ -203,8 +206,8 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
-    if (chdir("/") == -1) {
-        perror("chdir /");
+    if (chdir(cwd) == -1) {
+        perror("chdir cwd");
         _exit(1);
     }
 
@@ -359,6 +362,10 @@ static int create_container(char *argv[]) {
 
     shell_mode = config.shell_mode;
     readonly_fs = config.readonly_fs;
+
+    if (config.cwd[0] != '\0') {
+        snprintf(cwd, sizeof(cwd), "%s", config.cwd);
+    }
 
     int share_net;
 

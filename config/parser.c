@@ -173,6 +173,11 @@ int read_config(config_t *config) {
         }
     }
 
+   const cJSON *cwd = cJSON_GetObjectItemCaseSensitive(config_file, "cwd");
+    if (cJSON_IsString(cwd) && cwd->valuestring) {
+        snprintf(config->cwd, sizeof(config->cwd), "%s", cwd->valuestring);
+    }
+
     config->pid_limit = 0;
 
     const cJSON *pids = cJSON_GetObjectItemCaseSensitive(config_file, "pids");
