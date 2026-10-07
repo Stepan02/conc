@@ -89,7 +89,7 @@ static int memory_write(const pid_t pid, const unsigned long remote_address, con
     return 0;
 }
 
-int setup_syscall_blacklist(void) {
+int setup_syscall_blacklist(const int no_new_privileges) {
     const scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
     if (!ctx) {
         perror("seccomp_init");
@@ -141,10 +141,12 @@ int setup_syscall_blacklist(void) {
         }
     }
 
-    // disallow elevating privileges
-    if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-        perror("pr_set_no_new_privs");
-        return -1;
+    // disallow elevating privileges if nonewprivileges is set
+    if (no_new_privileges) {
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+            perror("pr_set_no_new_privs");
+            return -1;
+        }
     }
 
     // load seccomp rules
@@ -167,8 +169,6 @@ int setup_syscall_blacklist(void) {
 }
 
 static struct seccomp_notif_resp syscall_emulator(const struct seccomp_notif *request) {
-    printf("syscall %d\n", request->data.nr);
-
     // setup response
     struct seccomp_notif_resp response = {};
     response.id = request->id;
@@ -185,7 +185,7 @@ static struct seccomp_notif_resp syscall_emulator(const struct seccomp_notif *re
         }
 
         // get cgroups info
-        struct resources memory = read_resources(request->pid);
+        const struct resources memory = read_resources(request->pid);
 
         // set cgroup values if set
         if (memory.max > 0) {
@@ -238,9 +238,6 @@ int syscall_handler(const int notify_fd) {
         perror("ioctl seccomp_notif");
         return -1;
     }
-
-    printf("intercepted syscall %d (pid %d)\r\n", request.data.nr, request.pid);
-    fflush(stdout);
 
     // get response
     struct seccomp_notif_resp response = {};

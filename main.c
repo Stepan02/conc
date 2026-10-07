@@ -62,6 +62,7 @@ static int container_runtime(void *arg) {
     const int sync_sock = args[1];
     const int slave_fd = args[2];
     const int readonly_fs = args[3];
+    const int no_new_privileges = args[4];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -280,7 +281,7 @@ static int container_runtime(void *arg) {
     }
 
     // init syscall blacklist
-    const int notify_fd = setup_syscall_blacklist();
+    const int notify_fd = setup_syscall_blacklist(no_new_privileges);
     if (notify_fd < 0) {
         perror("syscall blacklist");
         _exit(1);
@@ -348,6 +349,7 @@ static int create_container(char *argv[]) {
     int cpu_limit = 100000; // us
     char custom_hostname[64] = "";
     int readonly_fs = 0; // filesystem is writable by default
+    int no_new_privileges = 1; // disallow elevating privileges by default
 
     // save container name
     snprintf(container_name, sizeof(container_name), "%s", argv[2]);
@@ -394,6 +396,7 @@ static int create_container(char *argv[]) {
     }
 
     command = config.command;
+    no_new_privileges = config.no_new_privileges;
 
     // prepare container base directory
     char base_dir[256];
@@ -514,7 +517,7 @@ static int create_container(char *argv[]) {
     }
 
     // clone child
-    int child_args[4] = {share_net, sync_sockets[1], slave_fd, readonly_fs};
+    int child_args[5] = {share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges};
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
     if (child_pid == -1) {

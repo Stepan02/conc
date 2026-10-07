@@ -236,6 +236,11 @@ int read_config(config_t *config) {
         }
     }
 
+    const cJSON *no_new_privileges = cJSON_GetObjectItemCaseSensitive(config_file, "noNewPrivileges");
+    if (cJSON_IsBool(no_new_privileges)) {
+        config->no_new_privileges = cJSON_IsTrue(no_new_privileges) ? 1 : 0;
+    }
+
     // delete json object
     cJSON_Delete(config_file);
 
