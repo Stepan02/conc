@@ -19,6 +19,8 @@ typedef struct {
     int pid_limit;
     char cwd[PATH_MAX];
     bool no_new_privileges;
+    int console_width;
+    int console_height;
 } config_t;
 
 int read_config(config_t *config);

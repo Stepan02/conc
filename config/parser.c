@@ -241,6 +241,23 @@ int read_config(config_t *config) {
         config->no_new_privileges = cJSON_IsTrue(no_new_privileges) ? 1 : 0;
     }
 
+    config->console_height = 24;
+    config->console_width = 80;
+
+    const cJSON *console_size = cJSON_GetObjectItemCaseSensitive(config_file, "consoleSize");
+    if (cJSON_IsObject(console_size)) {
+        const cJSON *height = cJSON_GetObjectItemCaseSensitive(console_size, "height");
+        const cJSON *width = cJSON_GetObjectItemCaseSensitive(console_size, "width");
+
+        if (cJSON_IsNumber(width)) {
+            config->console_width = width->valueint;
+        }
+
+        if (cJSON_IsNumber(height)) {
+            config->console_height = height->valueint;
+        }
+    }
+
     // delete json object
     cJSON_Delete(config_file);
 

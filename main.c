@@ -350,6 +350,8 @@ static int create_container(char *argv[]) {
     char custom_hostname[64] = "";
     int readonly_fs = 0; // filesystem is writable by default
     int no_new_privileges = 1; // disallow elevating privileges by default
+    int console_height = 24; // default console rows
+    int console_width = 80; // default console columns
 
     // save container name
     snprintf(container_name, sizeof(container_name), "%s", argv[2]);
@@ -422,6 +424,27 @@ static int create_container(char *argv[]) {
         }
 
         close(shell_mode_fd);
+    }
+
+    // write console size to a file
+    console_height = config.console_height;
+    console_width = config.console_width;
+
+    char console_size_path[512];
+    snprintf(console_size_path, sizeof(console_size_path), "%s/console-size", base_dir);
+
+    const int console_size_fd = open(console_size_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (console_size_fd != -1) {
+        char console_size_value[64];
+        const int console_size = snprintf(console_size_value, sizeof(console_size_value), "%d %d\n", console_height, console_width);
+
+        if (write(console_size_fd, console_size_value, console_size) < 0) {
+            perror("failed to set console size");
+            close(console_size_fd);
+            return 1;
+        }
+
+        close(console_size_fd);
     }
 
     // create sync socket
@@ -674,6 +697,38 @@ static int start_container() {
         close(shell_mode_fd);
     }
 
+    // load console width and height from console-size file
+    char console_size_path[512];
+    snprintf(console_size_path, sizeof(console_size_path), "/tmp/runner-%s/console-size", container_name);
+
+    int console_height = 0;
+    int console_width = 0;
+
+    const int console_size_fd = open(console_size_path, O_RDONLY);
+    if (console_size_fd != -1) {
+        char console_size_value[64];
+        const ssize_t value = read(console_size_fd, console_size_value, sizeof(console_size_value) - 1);
+
+        if (value > 0) {
+            console_size_value[value] = '\0'; // add null termination
+
+            char *endptr = NULL;
+            errno = 0;
+
+            const long rows = strtol(console_size_value, &endptr, 10);
+            if (errno == 0 && endptr != console_size_value) {
+                const long columns = strtol(endptr, NULL, 10);
+
+                if (errno == 0 && rows > 0 && columns > 0 && rows <= 65535 && columns <= 65535) {
+                    console_height = (int)rows;
+                    console_width = (int)columns;
+                }
+            }
+        }
+
+        close(console_size_fd);
+    }
+
     // receive fds from supervisor
     int master_fd = -1;
     if (shell_mode) {
@@ -712,6 +767,18 @@ static int start_container() {
 
         if (STDIN_FILENO > max_fd) {
             max_fd = STDIN_FILENO;
+        }
+
+        // set console size
+        if (console_height > 0 && console_width > 0) {
+            struct winsize ws = {
+                .ws_row = console_height,
+                .ws_col = console_width,
+            };
+
+            if (ioctl(master_fd, TIOCSWINSZ, &ws) == -1) {
+                perror("failed to set console size");
+            }
         }
     }
 
