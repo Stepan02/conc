@@ -9,6 +9,8 @@ typedef struct {
     char custom_hostname[256];
     int uid;
     int gid;
+    int *additional_gids;
+    int additional_gids_count;
     int ram_limit;
     int cpu_limit;
     char **env_variables;

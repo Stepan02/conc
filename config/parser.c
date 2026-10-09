@@ -137,6 +137,34 @@ int read_config(config_t *config) {
         config->gid = (uint32_t)gid->valuedouble;
     }
 
+    // no additional gids by default
+    config->additional_gids = NULL;
+    config->additional_gids_count = 0;
+
+    const cJSON *additional_gids = cJSON_GetObjectItemCaseSensitive(config_file, "additionalGids");
+    if (cJSON_IsArray(additional_gids)) {
+       const int count = cJSON_GetArraySize(additional_gids);
+
+        if (count > 0) {
+            config->additional_gids = calloc(count + 1, sizeof(gid_t)); // gids + null termination
+            if (!config->additional_gids) {
+                perror("failed to allocate additional gids");
+                cJSON_Delete(config_file);
+
+                return -1;
+            }
+
+            config->additional_gids_count = 0;
+
+            const cJSON *additional_gid = NULL;
+            cJSON_ArrayForEach(additional_gid, additional_gids) {
+                if (cJSON_IsNumber(additional_gid)) {
+                    config->additional_gids[config->additional_gids_count++] = additional_gid->valueint;
+                }
+            }
+        }
+    }
+
     const cJSON *ram_limit = cJSON_GetObjectItemCaseSensitive(config_file, "ram");
     if (cJSON_IsNumber(ram_limit)) {
         config->ram_limit = (uint64_t)ram_limit->valuedouble;

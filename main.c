@@ -57,12 +57,14 @@ static char child_stack[STACK_SIZE];
 static char **command = NULL;
 
 static int container_runtime(void *arg) {
-    const int *args = arg;
-    const int share_net = args[0];
-    const int sync_sock = args[1];
-    const int slave_fd = args[2];
-    const int readonly_fs = args[3];
-    const int no_new_privileges = args[4];
+    const uintptr_t *args = arg;
+    const int share_net = (int)args[0];
+    const int sync_sock = (int)args[1];
+    const int slave_fd = (int)args[2];
+    const int readonly_fs = (int)args[3];
+    const int no_new_privileges = (int)args[4];
+    const int *additional_gids = (const int *)args[5];
+    const int additional_gids_count = (int)args[6];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -257,7 +259,7 @@ static int container_runtime(void *arg) {
         }
     }
 
-    // setup hostname and env variables
+    // setup hostname
     if (sethostname(hostname, strlen(hostname)) == -1) {
         perror("hostname");
     }
@@ -316,13 +318,14 @@ static int container_runtime(void *arg) {
         }
     }
 
+    // set groups
+    if (setgroups(additional_gids_count, (const gid_t *)additional_gids) < 0) {
+        perror("setgroups");
+        _exit(1);
+    }
+
     // set uid and gid
     if (uid != 0 || gid != 0) {
-        if (setgroups(0, NULL) < 0) {
-            perror("setgroups");
-            _exit(1);
-        }
-
         if (setgid(gid) < 0) {
             perror("setgid");
             _exit(1);
@@ -390,7 +393,7 @@ static int create_container(char *argv[]) {
     gid = config.gid;
 
     if (config.env_variables_count > 0) {
-        env_variables = calloc(config.env_variables_count + 1, sizeof(char*));
+        env_variables = calloc(config.env_variables_count + 1, sizeof(char *));
 
         for (int i = 0; i < config.env_variables_count; i++) {
             env_variables[i] = config.env_variables[i];
@@ -539,8 +542,11 @@ static int create_container(char *argv[]) {
         exit(1);
     }
 
+    const uintptr_t additional_gids = (uintptr_t)config.additional_gids;
+    const int additional_gids_count = config.additional_gids_count;
+
     // clone child
-    int child_args[5] = {share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges};
+    uintptr_t child_args[7] = {share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count};
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
     if (child_pid == -1) {
