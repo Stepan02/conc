@@ -23,6 +23,8 @@ typedef struct {
     bool no_new_privileges;
     int console_width;
     int console_height;
+    char **readonly_paths;
+    int readonly_paths_count;
 } config_t;
 
 int read_config(config_t *config);

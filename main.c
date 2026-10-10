@@ -65,6 +65,8 @@ static int container_runtime(void *arg) {
     const int no_new_privileges = (int)args[4];
     const int *additional_gids = (const int *)args[5];
     const int additional_gids_count = (int)args[6];
+    char **readonly_paths = (char **)args[7];
+    const int readonly_paths_count = (int)args[8];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -243,6 +245,26 @@ static int container_runtime(void *arg) {
 
     chmod("/dev/ptmx", 0666);
     chmod("/dev/pts", 0755);
+
+    // mount read-only paths
+    for (int i = 0; i < readonly_paths_count; i++) {
+        const char *readonly_path = readonly_paths[i];
+
+        // read-only remount
+        if (mount(NULL, readonly_path, NULL, MS_REMOUNT | MS_RDONLY | MS_BIND, NULL) < 0) {
+            // the path might not be mounted
+            if (mount(readonly_path, readonly_path, NULL, MS_BIND | MS_REC, NULL) < 0) {
+                fprintf(stderr, "bind mount %s", readonly_path);
+                continue;
+            }
+
+            // retry read-only mount
+            if (mount(readonly_path, readonly_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC, NULL) < 0) {
+                perror("remount readonly paths");
+                _exit(1);
+            }
+        }
+    }
 
     // setup loopback if network is isolated
     if (!share_net) {
@@ -545,8 +567,11 @@ static int create_container(char *argv[]) {
     const uintptr_t additional_gids = (uintptr_t)config.additional_gids;
     const int additional_gids_count = config.additional_gids_count;
 
+    const uintptr_t readonly_paths = (uintptr_t)config.readonly_paths;
+    const uintptr_t readonly_paths_count = (uintptr_t)config.readonly_paths_count;
+
     // clone child
-    uintptr_t child_args[7] = {share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count};
+    uintptr_t child_args[9] = {share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths, readonly_paths_count};
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
     if (child_pid == -1) {
