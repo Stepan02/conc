@@ -25,6 +25,8 @@ typedef struct {
     int console_height;
     char **readonly_paths;
     int readonly_paths_count;
+    char **masked_paths;
+    int masked_paths_count;
 } config_t;
 
 int read_config(config_t *config);

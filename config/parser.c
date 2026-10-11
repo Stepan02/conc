@@ -100,6 +100,34 @@ int read_config(config_t *config) {
         }
     }
 
+    config->masked_paths = NULL;
+
+    const cJSON *masked_paths = cJSON_GetObjectItemCaseSensitive(config_file, "maskedPaths");
+    if (cJSON_IsArray(masked_paths)) {
+        const int count = cJSON_GetArraySize(masked_paths);
+
+        if (count > 0) {
+            config->masked_paths = calloc(count + 1, sizeof(char *)); // paths + null termination
+            if (!config->masked_paths) {
+                perror("failed to allocate masked paths");
+                cJSON_Delete(config_file);
+
+                return -1;
+            }
+
+            config->masked_paths_count = 0;
+
+            const cJSON *path = NULL;
+            cJSON_ArrayForEach(path, masked_paths) {
+                if (cJSON_IsString(path) && path->valuestring) {
+                    config->masked_paths[config->masked_paths_count++] = strdup(path->valuestring);
+                }
+            }
+
+            config->masked_paths[config->masked_paths_count] = NULL; // add null termination
+        }
+    }
+
     const cJSON *custom_hostname = cJSON_GetObjectItemCaseSensitive(config_file, "hostname");
     if (cJSON_IsString(custom_hostname) && custom_hostname->valuestring) {
         snprintf(config->custom_hostname, sizeof(config->custom_hostname), "%s", custom_hostname->valuestring);

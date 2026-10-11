@@ -67,6 +67,8 @@ static int container_runtime(void *arg) {
     const int additional_gids_count = (int)args[6];
     char **readonly_paths = (char **)args[7];
     const int readonly_paths_count = (int)args[8];
+    char **masked_paths = (char **)args[9];
+    const int masked_paths_count = (int)args[10];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -136,28 +138,6 @@ static int container_runtime(void *arg) {
 
     snprintf(path, sizeof(path), "%s/tmp", merged);
     mkdir(path, 0777);
-
-    // mask fips
-    char fips_path[PATH_MAX + 64];
-    snprintf(fips_path, sizeof(fips_path), "%s/proc/sys/crypto/fips_enabled", merged);
-    if (access(fips_path, F_OK) == 0) {
-        const int tmp_fd = open("/tmp/fips_zero", O_WRONLY | O_CREAT | O_TRUNC, 0644);
-        if (tmp_fd != -1) {
-            if (write(tmp_fd, "0\n", 2) != 2) {
-                perror("write fips_zero");
-            }
-
-            close(tmp_fd);
-            mount("/tmp/fips_zero", fips_path, NULL, MS_BIND, NULL);
-        }
-    }
-
-    // mask sysrq-trigger
-    char sysrq_trigger_path[PATH_MAX + 64];
-    snprintf(sysrq_trigger_path, sizeof(sysrq_trigger_path), "%s/proc/sysrq-trigger", merged);
-    if (mount("/dev/null", sysrq_trigger_path, NULL, MS_BIND, NULL) == -1) {
-        perror("mask sysrq-trigger");
-    }
 
     char sys_path[PATH_MAX + 64];
     snprintf(sys_path, sizeof(sys_path), "%s/proc/sys", merged);
@@ -262,6 +242,31 @@ static int container_runtime(void *arg) {
             if (mount(readonly_path, readonly_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC, NULL) < 0) {
                 perror("remount readonly paths");
                 _exit(1);
+            }
+        }
+    }
+
+    // mount masked paths
+    for (int i = 0; i < masked_paths_count; i++) {
+        const char *masked_path = masked_paths[i];
+
+        // skip nonexisting paths
+        struct stat st;
+        if (stat(masked_path, &st) < 0) {
+            continue;
+        }
+
+        // mask directory to tmpfs
+        if (S_ISDIR(st.st_mode)) {
+            if (mount("tmpfs", masked_path, "tmpfs", MS_RDONLY, "size=0") < 0) {
+                fprintf(stderr, "mount masked directory %s\n", masked_path);
+                continue;
+            }
+        } else {
+            // mask file to /dev/null
+            if (mount("/dev/null", masked_path, NULL, MS_BIND, NULL) < 0) {
+                fprintf(stderr, "mount masked file %s\n", masked_path);
+                continue;
             }
         }
     }
@@ -570,8 +575,14 @@ static int create_container(char *argv[]) {
     const uintptr_t readonly_paths = (uintptr_t)config.readonly_paths;
     const uintptr_t readonly_paths_count = (uintptr_t)config.readonly_paths_count;
 
+    const uintptr_t masked_paths = (uintptr_t)config.masked_paths;
+    const uintptr_t masked_paths_count = (uintptr_t)config.masked_paths_count;
+
     // clone child
-    uintptr_t child_args[9] = {share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths, readonly_paths_count};
+    uintptr_t child_args[11] = {
+        share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
+        readonly_paths_count, masked_paths, masked_paths_count
+    };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
     if (child_pid == -1) {
