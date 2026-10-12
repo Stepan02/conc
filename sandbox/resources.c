@@ -1,4 +1,5 @@
 #include "resources.h"
+#include <fcntl.h>
 #include <sched.h>
 #include <systemd/sd-bus.h>
 #include <stdio.h>
@@ -120,5 +121,33 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
     sd_bus_message_unref(m);
     sd_bus_unref(bus);
 
+    // set oom score if set
+
+
     return r;
+}
+
+int set_limits(const int oom_score_adj) {
+    // do not modify the value by default
+    if (oom_score_adj == 0) {
+        return 0;
+    }
+
+    // write oom score adjust limit
+    const int fd = open("/proc/self/oom_score_adj", O_WRONLY);
+    if (fd < 0) {
+        perror("open oom_score_adj");
+        return -1;
+    }
+
+    char buffer[32];
+    const int len = snprintf(buffer, sizeof(buffer), "%d", oom_score_adj);
+    if (write(fd, buffer, len) < 0) {
+        perror("write oom_score_adj");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    return 0;
 }

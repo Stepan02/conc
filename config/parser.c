@@ -342,6 +342,13 @@ int read_config(config_t *config) {
         }
     }
 
+    config->oom_score_adj = 0;
+
+    const cJSON *oom_score_adj = cJSON_GetObjectItemCaseSensitive(config_file, "oomScoreAdj");
+    if (cJSON_IsNumber(oom_score_adj)) {
+        config->oom_score_adj = oom_score_adj->valueint;
+    }
+
     // delete json object
     cJSON_Delete(config_file);
 

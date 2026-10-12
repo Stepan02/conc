@@ -4,5 +4,6 @@
 #include <stdint.h>
 
 int allocate_resources(pid_t child_pid, uint64_t ram_mb, uint64_t cpu_us, uint64_t pid_limit);
+int set_limits(int oom_score_adj);
 
 #endif //SANDBOX_RESOURCES_H

@@ -27,6 +27,7 @@ typedef struct {
     int readonly_paths_count;
     char **masked_paths;
     int masked_paths_count;
+    int oom_score_adj;
 } config_t;
 
 int read_config(config_t *config);
