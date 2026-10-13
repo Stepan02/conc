@@ -5,6 +5,8 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+#include <linux/limits.h>
+#include "include/types.h"
 
 int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint64_t cpu_us, const uint64_t pid_limit) {
     sd_bus *bus = NULL;
@@ -149,5 +151,49 @@ int set_limits(const int oom_score_adj) {
     }
 
     close(fd);
+    return 0;
+}
+
+int setup_sysctl(const object_t *sysctl, const int sysctl_count) {
+    if (sysctl_count == 0) {
+        // do not change anything if no config values are provided
+        return 0;
+    }
+
+    for (int i = 0; i < sysctl_count; i++) {
+        const char *key = sysctl[i].key;
+        const char *value = sysctl[i].value;
+
+        if (!key || !value) {
+            continue;
+        }
+
+        // resolve path
+        char sysctl_path[PATH_MAX];
+        snprintf(sysctl_path, sizeof(sysctl_path), "/proc/sys/%s", key);
+
+        // replace dots with slashes
+        for (int j = 10; sysctl_path[j] != '\0'; j++) {
+            if (sysctl_path[j] == '.') {
+                sysctl_path[j] = '/';
+            }
+        }
+
+        // write the sysctl value
+        const int fd = open(sysctl_path, O_WRONLY);
+        if (fd < 0) {
+            perror("open sysctl");
+            return -1;
+        }
+
+        const ssize_t r = write(fd, value, strlen(value));
+        close(fd);
+
+        if (r < 0) {
+            perror("write sysctl");
+            return -1;
+        }
+    }
+
     return 0;
 }

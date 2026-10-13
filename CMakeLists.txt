@@ -22,7 +22,8 @@ add_executable(runner main.c
         config/parser.c
         config/parser.h
         libs/cJSON.c
-        libs/cJSON.h)
+        libs/cJSON.h
+        include/types.h)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(SYSTEMD REQUIRED libsystemd)

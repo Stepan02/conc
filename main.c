@@ -70,6 +70,8 @@ static int container_runtime(void *arg) {
     char **masked_paths = (char **)args[9];
     const int masked_paths_count = (int)args[10];
     const int oom_score_adj = (int)args[11];
+    const object_t *sysctl = (const object_t *)args[12];
+    const int sysctl_count = (int)args[13];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -142,8 +144,8 @@ static int container_runtime(void *arg) {
 
     char sys_path[PATH_MAX + 64];
     snprintf(sys_path, sizeof(sys_path), "%s/proc/sys", merged);
-    if (mount(sys_path, sys_path, NULL, MS_BIND | MS_REC, NULL) == 0) {
-        mount(sys_path, sys_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL);
+    if (mount(sys_path, sys_path, NULL, MS_BIND | MS_REC, NULL) == -1) {
+        perror("bind mount /proc/sys");
     }
 
     snprintf(path, sizeof(path), "%s/dev", merged);
@@ -346,6 +348,11 @@ static int container_runtime(void *arg) {
         }
     }
 
+    // set sysctl flags
+    if (setup_sysctl(sysctl, sysctl_count) < 0) {
+        _exit(1);
+    }
+
     // set groups
     if (setgroups(additional_gids_count, (const gid_t *)additional_gids) < 0) {
         perror("setgroups");
@@ -366,7 +373,7 @@ static int container_runtime(void *arg) {
     }
 
     // set oom score limit
-    if (set_limits(oom_score_adj)) {
+    if (set_limits(oom_score_adj) < 0) {
         _exit(1);
     }
 
@@ -586,10 +593,13 @@ static int create_container(char *argv[]) {
 
     const int oom_score_adj = config.oom_score_adj;
 
+    const uintptr_t sysctl = (uintptr_t)config.sysctl;
+    const int sysctl_count = config.sysctl_count;
+
     // clone child
-    uintptr_t child_args[12] = {
+    uintptr_t child_args[14] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj
+        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

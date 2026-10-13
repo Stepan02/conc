@@ -2,6 +2,7 @@
 #define SANDBOX_PARSER_H
 #include <stdbool.h>
 #include <linux/limits.h>
+#include "include/types.h"
 
 typedef struct {
     bool shell_mode;
@@ -28,6 +29,8 @@ typedef struct {
     char **masked_paths;
     int masked_paths_count;
     int oom_score_adj;
+    object_t *sysctl;
+    int sysctl_count;
 } config_t;
 
 int read_config(config_t *config);

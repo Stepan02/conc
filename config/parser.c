@@ -349,6 +349,34 @@ int read_config(config_t *config) {
         config->oom_score_adj = oom_score_adj->valueint;
     }
 
+    const cJSON *sysctl = cJSON_GetObjectItemCaseSensitive(config_file, "sysctl");
+    if (cJSON_IsObject(sysctl)) {
+        const int count = cJSON_GetArraySize(sysctl);
+
+        if (count > 0) {
+            config->sysctl = calloc(count + 1, sizeof(object_t)); // object + null termination
+            if (!config->sysctl) {
+                perror("failed to allocate sysctl");
+                cJSON_Delete(config_file);
+
+                return -1;
+            }
+
+            const cJSON *item = NULL;
+            int i = 0;
+            cJSON_ArrayForEach(item, sysctl) {
+                if (cJSON_IsString(item) && item->valuestring && item->string) {
+                    config->sysctl[i].key = strdup(item->string);
+                    config->sysctl[i].value = strdup(item->valuestring);
+                    i++;
+                }
+            }
+
+            config->sysctl_count = i;
+            config->sysctl[config->sysctl_count].key = NULL; // add null termination
+        }
+    }
+
     // delete json object
     cJSON_Delete(config_file);
 
@@ -376,5 +404,15 @@ void free_config(config_t *config) {
 
         free(config->command);
         config->command = NULL;
+    }
+
+    if (config->sysctl != NULL) {
+        for (int i = 0; config->sysctl[i].key != NULL; i++) {
+            free(config->sysctl[i].key);
+            free(config->sysctl[i].value);
+        }
+
+        free(config->sysctl);
+        config->sysctl = NULL;
     }
 }
