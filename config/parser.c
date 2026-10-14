@@ -377,6 +377,13 @@ int read_config(config_t *config) {
         }
     }
 
+    config->umask = -1;
+
+    const cJSON *umask = cJSON_GetObjectItemCaseSensitive(config_file, "umask");
+    if (cJSON_IsNumber(umask)) {
+        config->umask = umask->valueint;
+    }
+
     // delete json object
     cJSON_Delete(config_file);
 

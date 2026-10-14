@@ -123,9 +123,6 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
     sd_bus_message_unref(m);
     sd_bus_unref(bus);
 
-    // set oom score if set
-
-
     return r;
 }
 

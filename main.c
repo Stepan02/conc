@@ -72,6 +72,7 @@ static int container_runtime(void *arg) {
     const int oom_score_adj = (int)args[11];
     const object_t *sysctl = (const object_t *)args[12];
     const int sysctl_count = (int)args[13];
+    const int umask_value = (int)args[14];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -377,6 +378,11 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
+    // set umask if specified
+    if (umask_value != -1) {
+        umask((mode_t)umask_value);
+    }
+
     // close descriptors
     syscall(SYS_close_range, 3, ~0U, 0);
     execvp(command[0], command);
@@ -596,10 +602,12 @@ static int create_container(char *argv[]) {
     const uintptr_t sysctl = (uintptr_t)config.sysctl;
     const int sysctl_count = config.sysctl_count;
 
+    const int umask = config.umask;
+
     // clone child
-    uintptr_t child_args[14] = {
+    uintptr_t child_args[15] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count
+        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

@@ -31,6 +31,7 @@ typedef struct {
     int oom_score_adj;
     object_t *sysctl;
     int sysctl_count;
+    int umask;
 } config_t;
 
 int read_config(config_t *config);
