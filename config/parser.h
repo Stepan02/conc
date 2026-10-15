@@ -32,6 +32,8 @@ typedef struct {
     object_t *sysctl;
     int sysctl_count;
     int umask;
+    device_t *devices;
+    int devices_count;
 } config_t;
 
 int read_config(config_t *config);

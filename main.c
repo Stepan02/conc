@@ -73,6 +73,8 @@ static int container_runtime(void *arg) {
     const object_t *sysctl = (const object_t *)args[12];
     const int sysctl_count = (int)args[13];
     const int umask_value = (int)args[14];
+    const device_t *devices = (const device_t *)args[15];
+    const int devices_count = (int)args[16];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -604,10 +606,13 @@ static int create_container(char *argv[]) {
 
     const int umask = config.umask;
 
+    const uintptr_t devices = (uintptr_t)config.devices;
+    const int devices_count = config.devices_count;
+
     // clone child
-    uintptr_t child_args[15] = {
+    uintptr_t child_args[17] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask
+        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
@@ -638,7 +643,7 @@ static int create_container(char *argv[]) {
     }
 
     // create and assign cgroup
-    if (allocate_resources(child_pid, ram_limit, cpu_limit, config.pid_limit) < 0) {
+    if (allocate_resources(child_pid, ram_limit, cpu_limit, config.pid_limit, config.devices, config.devices_count) < 0) {
         fprintf(stderr, "allocate_resources\n");
 
         // kill child

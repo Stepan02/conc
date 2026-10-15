@@ -384,6 +384,42 @@ int read_config(config_t *config) {
         config->umask = umask->valueint;
     }
 
+    const cJSON *devices = cJSON_GetObjectItemCaseSensitive(config_file, "devices");
+    if (cJSON_IsArray(devices)) {
+        const int count = cJSON_GetArraySize(devices);
+        if (count > 0) {
+            config->devices = malloc(sizeof(device_t) * count);
+            config->devices_count = count;
+
+            for (int i = 0; i < count; i++) {
+                const cJSON *device = cJSON_GetArrayItem(devices, i);
+
+                const cJSON *path = cJSON_GetObjectItemCaseSensitive(device, "path");
+                if (cJSON_IsString(path) && path->valuestring) {
+                    strncpy(config->devices[i].path, path->valuestring, sizeof(config->devices[i].path) - 1);
+                    config->devices[i].path[sizeof(config->devices[i].path) - 1] = '\0';
+                } else {
+                    config->devices[i].path[0] = '\0';
+                }
+
+                const cJSON *allow = cJSON_GetObjectItemCaseSensitive(device, "allow");
+                if (cJSON_IsBool(allow)) {
+                    config->devices[i].allow = cJSON_IsTrue(allow);
+                } else {
+                    config->devices[i].allow = 0;
+                }
+
+                const cJSON *access = cJSON_GetObjectItemCaseSensitive(device, "access");
+                if (cJSON_IsString(access) && access->valuestring) {
+                    strncpy(config->devices[i].access, access->valuestring, sizeof(config->devices[i].access) - 1);
+                    config->devices[i].access[sizeof(config->devices[i].access) - 1] = '\0';
+                } else {
+                    config->devices[i].access[0] = '\0';
+                }
+            }
+        }
+    }
+
     // delete json object
     cJSON_Delete(config_file);
 
@@ -421,5 +457,10 @@ void free_config(config_t *config) {
 
         free(config->sysctl);
         config->sysctl = NULL;
+    }
+
+    if (config->devices != NULL) {
+        free(config->devices);
+        config->devices = NULL;
     }
 }

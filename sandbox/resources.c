@@ -8,7 +8,7 @@
 #include <linux/limits.h>
 #include "include/types.h"
 
-int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint64_t cpu_us, const uint64_t pid_limit) {
+int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint64_t cpu_us, const uint64_t pid_limit, const device_t *devices, const int device_count) {
     sd_bus *bus = NULL;
     sd_bus_message *m = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -102,6 +102,27 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
         sd_bus_message_append(m, "s", "CPUQuotaPerSecUSec");
         sd_bus_message_open_container(m, 'v', "t");
         sd_bus_message_append(m, "t", cpu_us);
+        sd_bus_message_close_container(m);
+        sd_bus_message_close_container(m);
+    }
+
+    // set devices
+    if (device_count > 0) {
+        sd_bus_message_open_container(m, 'r', "sv");
+        sd_bus_message_append(m, "s", "DeviceAllow");
+
+        sd_bus_message_open_container(m, 'v', "a(ss)");
+        sd_bus_message_open_container(m, 'a', "(ss)");
+
+        for (int i = 0; i < device_count; i++) {
+            if (devices[i].allow) {
+                sd_bus_message_open_container(m, 'r', "ss");
+                sd_bus_message_append(m, "ss", devices[i].path, devices[i].access);
+                sd_bus_message_close_container(m);
+            }
+        }
+
+        sd_bus_message_close_container(m);
         sd_bus_message_close_container(m);
         sd_bus_message_close_container(m);
     }
