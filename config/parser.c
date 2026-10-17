@@ -416,6 +416,19 @@ int read_config(config_t *config) {
                 } else {
                     config->devices[i].access[0] = '\0';
                 }
+
+                config->devices[i].uid = 0;
+                config->devices[i].gid = 0;
+
+                const cJSON *device_uid = cJSON_GetObjectItemCaseSensitive(device, "uid");
+                if (cJSON_IsNumber(device_uid)) {
+                    config->devices[i].uid = (uint32_t)device_uid->valuedouble;
+                }
+
+                const cJSON *device_gid = cJSON_GetObjectItemCaseSensitive(device, "gid");
+                if (cJSON_IsNumber(device_gid)) {
+                    config->devices[i].gid = (uint32_t)device_gid->valuedouble;
+                }
             }
         }
     }

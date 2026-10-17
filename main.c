@@ -155,17 +155,27 @@ static int container_runtime(void *arg) {
     mkdir(path, 0755);
 
     // mount devices
-    for (int i = 0; i < 5; i++) {
-        const char *sys_devs[] = {"/dev/null", "/dev/zero", "/dev/random", "/dev/urandom", "/dev/tty"};
-        snprintf(path, sizeof(path), "%s%s", merged, sys_devs[i]);
+    for (int i = 0; i < devices_count; i++) {
+        // ignore disallowed devices
+        if (!devices[i].allow) {
+            continue;
+        }
+
+        snprintf(path, sizeof(path), "%s%s", merged, devices[i].path);
 
         const int fd = open(path, O_WRONLY | O_CREAT, 0666);
         if (fd != -1) {
             close(fd);
         }
 
-        if (mount(sys_devs[i], path, NULL, MS_BIND, NULL) == -1) {
-            perror(sys_devs[i]);
+        if (mount(devices[i].path, path, NULL, MS_BIND, NULL) == -1) {
+            perror(devices[i].path);
+            continue;
+        }
+
+        // set device owner
+        if (chown(path, devices[i].uid, devices[i].gid) == -1) {
+            perror("chmod");
         }
     }
 

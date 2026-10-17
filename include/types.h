@@ -10,6 +10,8 @@ typedef struct {
     int allow;
     char access[8];
     char path[256];
+    int uid;
+    int gid;
 } device_t;
 
 #endif //SANDBOX_TYPES_H
