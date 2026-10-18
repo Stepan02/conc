@@ -170,12 +170,19 @@ static int container_runtime(void *arg) {
 
         if (mount(devices[i].path, path, NULL, MS_BIND, NULL) == -1) {
             perror(devices[i].path);
-            continue;
+            _exit(1);
         }
 
         // set device owner
         if (chown(path, devices[i].uid, devices[i].gid) == -1) {
-            perror("chmod");
+            perror("chown device");
+            _exit(1);
+        }
+
+        // set device file mode
+        if (chmod(path, devices[i].file_mode) == -1) {
+            perror("chmod device");
+            _exit(1);
         }
     }
 

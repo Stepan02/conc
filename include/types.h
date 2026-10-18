@@ -12,6 +12,7 @@ typedef struct {
     char path[256];
     int uid;
     int gid;
+    int file_mode;
 } device_t;
 
 #endif //SANDBOX_TYPES_H

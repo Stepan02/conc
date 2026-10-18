@@ -429,6 +429,13 @@ int read_config(config_t *config) {
                 if (cJSON_IsNumber(device_gid)) {
                     config->devices[i].gid = (uint32_t)device_gid->valuedouble;
                 }
+
+                config->devices[i].file_mode = 0666;
+
+                const cJSON *file_mode = cJSON_GetObjectItemCaseSensitive(device, "fileMode");
+                if (cJSON_IsNumber(file_mode)) {
+                    config->devices[i].file_mode = (uint32_t)file_mode->valuedouble;
+                }
             }
         }
     }
