@@ -1,5 +1,6 @@
 #include "resources.h"
 #include <fcntl.h>
+#include <math.h>
 #include <sched.h>
 #include <systemd/sd-bus.h>
 #include <stdio.h>
@@ -108,23 +109,56 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
 
     // set devices
     if (device_count > 0) {
-        sd_bus_message_open_container(m, 'r', "sv");
-        sd_bus_message_append(m, "s", "DeviceAllow");
-
-        sd_bus_message_open_container(m, 'v', "a(ss)");
-        sd_bus_message_open_container(m, 'a', "(ss)");
+        int global_allow_set = 0;
+        int global_allow_value = 1;
+        int explicit_devices = 0;
 
         for (int i = 0; i < device_count; i++) {
+            if (devices[i].path[0] == '\0') {
+                global_allow_set = 1;
+                global_allow_value = devices[i].allow;
+            }
+
             if (devices[i].allow) {
-                sd_bus_message_open_container(m, 'r', "ss");
-                sd_bus_message_append(m, "ss", devices[i].path, devices[i].access);
-                sd_bus_message_close_container(m);
+                explicit_devices++;
             }
         }
 
-        sd_bus_message_close_container(m);
-        sd_bus_message_close_container(m);
-        sd_bus_message_close_container(m);
+        if (global_allow_set) {
+            sd_bus_message_open_container(m, 'r', "sv");
+            sd_bus_message_append(m, "s", "DevicePolicy");
+            sd_bus_message_open_container(m, 'v', "s");
+
+            sd_bus_message_append(m, "s", global_allow_value ? "auto" : "strict");
+
+            sd_bus_message_close_container(m);
+            sd_bus_message_close_container(m);
+        }
+
+        if (explicit_devices > 0) {
+            sd_bus_message_open_container(m, 'r', "sv");
+            sd_bus_message_append(m, "s", "DeviceAllow");
+
+            sd_bus_message_open_container(m, 'v', "a(ss)");
+            sd_bus_message_open_container(m, 'a', "(ss)");
+
+
+            for (int i = 0; i < device_count; i++) {
+                if (devices[i].path[0] == '\0') {
+                    continue;
+                }
+
+                if (devices[i].allow) {
+                    sd_bus_message_open_container(m, 'r', "ss");
+                    sd_bus_message_append(m, "ss", devices[i].path, devices[i].access);
+                    sd_bus_message_close_container(m);
+                }
+            }
+
+            sd_bus_message_close_container(m);
+            sd_bus_message_close_container(m);
+            sd_bus_message_close_container(m);
+        }
     }
 
     // end properties
