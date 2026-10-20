@@ -62,9 +62,61 @@ int read_config(config_t *config) {
     }
 
     // return config object
-    const cJSON *shell_mode = cJSON_GetObjectItemCaseSensitive(config_file, "shell");
-    if (cJSON_IsBool(shell_mode)) {
-        config->shell_mode = cJSON_IsTrue(shell_mode);
+    const cJSON *process = cJSON_GetObjectItemCaseSensitive(config_file, "process");
+    if (cJSON_IsObject(process)) {
+        const cJSON *terminal = cJSON_GetObjectItemCaseSensitive(process, "terminal");
+        if (cJSON_IsBool(terminal)) {
+            config->shell_mode = cJSON_IsTrue(terminal);
+        }
+
+
+        const cJSON *uid = cJSON_GetObjectItemCaseSensitive(process, "uid");
+        if (cJSON_IsNumber(uid)) {
+            config->uid = (uint32_t)uid->valuedouble;
+        }
+
+        const cJSON *gid = cJSON_GetObjectItemCaseSensitive(process, "gid");
+        if (cJSON_IsNumber(gid)) {
+            config->gid = (uint32_t)gid->valuedouble;
+        }
+
+        // no additional gids by default
+        config->additional_gids = NULL;
+        config->additional_gids_count = 0;
+
+        const cJSON *additional_gids = cJSON_GetObjectItemCaseSensitive(process, "additionalGids");
+        if (cJSON_IsArray(additional_gids)) {
+            const int count = cJSON_GetArraySize(additional_gids);
+
+            if (count > 0) {
+                config->additional_gids = calloc(count + 1, sizeof(gid_t)); // gids + null termination
+                if (!config->additional_gids) {
+                    perror("failed to allocate additional gids");
+                    cJSON_Delete(config_file);
+
+                    return -1;
+                }
+
+                config->additional_gids_count = 0;
+
+                const cJSON *additional_gid = NULL;
+                cJSON_ArrayForEach(additional_gid, additional_gids) {
+                    if (cJSON_IsNumber(additional_gid)) {
+                        config->additional_gids[config->additional_gids_count++] = additional_gid->valueint;
+                    }
+                }
+            }
+        }
+
+        const cJSON *cwd = cJSON_GetObjectItemCaseSensitive(process, "cwd");
+        if (cJSON_IsString(cwd) && cwd->valuestring) {
+            snprintf(config->cwd, sizeof(config->cwd), "%s", cwd->valuestring);
+        }
+
+        const cJSON *no_new_privileges = cJSON_GetObjectItemCaseSensitive(process, "noNewPrivileges");
+        if (cJSON_IsBool(no_new_privileges)) {
+            config->no_new_privileges = cJSON_IsTrue(no_new_privileges) ? 1 : 0;
+        }
     }
 
     const cJSON *readonly_fs = cJSON_GetObjectItemCaseSensitive(config_file, "readonlyFilesystem");
@@ -133,9 +185,9 @@ int read_config(config_t *config) {
         snprintf(config->custom_hostname, sizeof(config->custom_hostname), "%s", custom_hostname->valuestring);
     }
 
-    const cJSON *command = cJSON_GetObjectItem(config_file, "command");
-    if (cJSON_IsArray(command)) {
-        const int count = cJSON_GetArraySize(command);
+    const cJSON *args = cJSON_GetObjectItem(process, "args");
+    if (cJSON_IsArray(args)) {
+        const int count = cJSON_GetArraySize(args);
 
         if (count > 0) {
             config->command = calloc(count + 1, sizeof(char *)); // args + null termination
@@ -149,7 +201,7 @@ int read_config(config_t *config) {
             config->command_args_count = 0;
 
             const cJSON *command_arg = NULL;
-            cJSON_ArrayForEach(command_arg, command) {
+            cJSON_ArrayForEach(command_arg, args) {
                 if (cJSON_IsString(command_arg) && command_arg->valuestring) {
                     config->command[config->command_args_count++] = strdup(command_arg->valuestring);
                 }
@@ -181,44 +233,6 @@ int read_config(config_t *config) {
         config->command[0] = strdup("/bin/sh");
         config->command[1] = NULL;
         config->command_args_count = 1;
-    }
-
-    const cJSON *uid = cJSON_GetObjectItemCaseSensitive(config_file, "uid");
-    if (cJSON_IsNumber(uid)) {
-        config->uid = (uint32_t)uid->valuedouble;
-    }
-
-    const cJSON *gid = cJSON_GetObjectItemCaseSensitive(config_file, "gid");
-    if (cJSON_IsNumber(gid)) {
-        config->gid = (uint32_t)gid->valuedouble;
-    }
-
-    // no additional gids by default
-    config->additional_gids = NULL;
-    config->additional_gids_count = 0;
-
-    const cJSON *additional_gids = cJSON_GetObjectItemCaseSensitive(config_file, "additionalGids");
-    if (cJSON_IsArray(additional_gids)) {
-       const int count = cJSON_GetArraySize(additional_gids);
-
-        if (count > 0) {
-            config->additional_gids = calloc(count + 1, sizeof(gid_t)); // gids + null termination
-            if (!config->additional_gids) {
-                perror("failed to allocate additional gids");
-                cJSON_Delete(config_file);
-
-                return -1;
-            }
-
-            config->additional_gids_count = 0;
-
-            const cJSON *additional_gid = NULL;
-            cJSON_ArrayForEach(additional_gid, additional_gids) {
-                if (cJSON_IsNumber(additional_gid)) {
-                    config->additional_gids[config->additional_gids_count++] = additional_gid->valueint;
-                }
-            }
-        }
     }
 
     const cJSON *ram_limit = cJSON_GetObjectItemCaseSensitive(config_file, "ram");
@@ -255,11 +269,6 @@ int read_config(config_t *config) {
 
             config->env_variables[config->env_variables_count] = NULL; // add null termination
         }
-    }
-
-   const cJSON *cwd = cJSON_GetObjectItemCaseSensitive(config_file, "cwd");
-    if (cJSON_IsString(cwd) && cwd->valuestring) {
-        snprintf(config->cwd, sizeof(config->cwd), "%s", cwd->valuestring);
     }
 
     config->pid_limit = 0;
@@ -318,11 +327,6 @@ int read_config(config_t *config) {
                 }
             }
         }
-    }
-
-    const cJSON *no_new_privileges = cJSON_GetObjectItemCaseSensitive(config_file, "noNewPrivileges");
-    if (cJSON_IsBool(no_new_privileges)) {
-        config->no_new_privileges = cJSON_IsTrue(no_new_privileges) ? 1 : 0;
     }
 
     config->console_height = 24;
