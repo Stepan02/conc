@@ -26,7 +26,7 @@ int read_config(config_t *config) {
     // shell runtime is enabled by default (1 = enabled, 0 = disabled)
     config->shell_mode = 1;
 
-     // open config.json file
+    // open config.json file
     FILE *fp = fopen(config_path, "rb");
     if (!fp) {
         fprintf(stderr, "failed to open config.json\n");
@@ -68,7 +68,6 @@ int read_config(config_t *config) {
         if (cJSON_IsBool(terminal)) {
             config->shell_mode = cJSON_IsTrue(terminal);
         }
-
 
         const cJSON *uid = cJSON_GetObjectItemCaseSensitive(process, "uid");
         if (cJSON_IsNumber(uid)) {
@@ -117,67 +116,217 @@ int read_config(config_t *config) {
         if (cJSON_IsBool(no_new_privileges)) {
             config->no_new_privileges = cJSON_IsTrue(no_new_privileges) ? 1 : 0;
         }
+
+        const cJSON *env_variables = cJSON_GetObjectItemCaseSensitive(process, "env");
+        if (cJSON_IsArray(env_variables)) {
+            const int count = cJSON_GetArraySize(env_variables);
+
+            if (count > 0) {
+                config->env_variables = calloc(count + 1, sizeof(char *)); // variables + null termination
+                if (!config->env_variables) {
+                    perror("failed to allocate env variables");
+                    cJSON_Delete(config_file);
+
+                    return -1;
+                }
+
+                config->env_variables_count = 0;
+
+                const cJSON *variable = NULL;
+                cJSON_ArrayForEach(variable, env_variables) {
+                    if (cJSON_IsString(variable) && variable->valuestring) {
+                        config->env_variables[config->env_variables_count++] = strdup(variable->valuestring);
+                    }
+                }
+
+                config->env_variables[config->env_variables_count] = NULL; // add null termination
+            }
+        }
+    }
+
+    const cJSON *linux_object = cJSON_GetObjectItemCaseSensitive(config_file, "linux");
+    if (cJSON_IsObject(linux_object)) {
+        const cJSON *resources = cJSON_GetObjectItemCaseSensitive(linux_object, "resources");
+        if (cJSON_IsObject(resources)) {
+            const cJSON *devices = cJSON_GetObjectItemCaseSensitive(resources, "devices");
+            if (cJSON_IsArray(devices)) {
+                const int count = cJSON_GetArraySize(devices);
+                if (count > 0) {
+                    config->devices = malloc(sizeof(device_t) * count);
+                    config->devices_count = count;
+
+                    for (int i = 0; i < count; i++) {
+                        const cJSON *device = cJSON_GetArrayItem(devices, i);
+
+                        const cJSON *path = cJSON_GetObjectItemCaseSensitive(device, "path");
+                        if (cJSON_IsString(path) && path->valuestring) {
+                            strncpy(config->devices[i].path, path->valuestring, sizeof(config->devices[i].path) - 1);
+                            config->devices[i].path[sizeof(config->devices[i].path) - 1] = '\0';
+                        } else {
+                            config->devices[i].path[0] = '\0';
+                        }
+
+                        const cJSON *allow = cJSON_GetObjectItemCaseSensitive(device, "allow");
+                        if (cJSON_IsBool(allow)) {
+                            config->devices[i].allow = cJSON_IsTrue(allow);
+                        } else {
+                            config->devices[i].allow = 0;
+                        }
+
+                        const cJSON *access = cJSON_GetObjectItemCaseSensitive(device, "access");
+                        if (cJSON_IsString(access) && access->valuestring) {
+                            strncpy(config->devices[i].access, access->valuestring, sizeof(config->devices[i].access) - 1);
+                            config->devices[i].access[sizeof(config->devices[i].access) - 1] = '\0';
+                        } else {
+                            config->devices[i].access[0] = '\0';
+                        }
+
+                        config->devices[i].uid = 0;
+                        config->devices[i].gid = 0;
+
+                        const cJSON *device_uid = cJSON_GetObjectItemCaseSensitive(device, "uid");
+                        if (cJSON_IsNumber(device_uid)) {
+                            config->devices[i].uid = (uint32_t) device_uid->valuedouble;
+                        }
+
+                        const cJSON *device_gid = cJSON_GetObjectItemCaseSensitive(device, "gid");
+                        if (cJSON_IsNumber(device_gid)) {
+                            config->devices[i].gid = (uint32_t) device_gid->valuedouble;
+                        }
+
+                        config->devices[i].file_mode = 0666;
+
+                        const cJSON *file_mode = cJSON_GetObjectItemCaseSensitive(device, "fileMode");
+                        if (cJSON_IsNumber(file_mode)) {
+                            config->devices[i].file_mode = (uint32_t) file_mode->valuedouble;
+                        }
+                    }
+                }
+            }
+        }
+
+        const cJSON *namespaces = cJSON_GetObjectItemCaseSensitive(linux_object, "namespaces");
+        if (cJSON_IsArray(namespaces)) {
+            const cJSON *namespace = NULL;
+
+            cJSON_ArrayForEach(namespace, namespaces) {
+                if (!cJSON_IsObject(namespace)) {
+                    continue;
+                }
+
+                const cJSON *type = cJSON_GetObjectItemCaseSensitive(namespace, "type");
+                if (cJSON_IsString(type) && type->valuestring) {
+                    const char *value = type->valuestring;
+
+                    if (strcmp(value, "pid") == 0) {
+                        config->namespaces |= CLONE_NEWPID;
+                    } else if (strcmp(value, "network") == 0) {
+                        config->namespaces |= CLONE_NEWNET;
+                    } else if (strcmp(value, "mount") == 0) {
+                        config->namespaces |= CLONE_NEWNS;
+                    } else if (strcmp(value, "ipc") == 0) {
+                        config->namespaces |= CLONE_NEWIPC;
+                    } else if (strcmp(value, "uts") == 0) {
+                        config->namespaces |= CLONE_NEWUTS;
+                    } else if (strcmp(value, "user") == 0) {
+                        config->namespaces |= CLONE_NEWUSER;
+                    } else if (strcmp(value, "cgroup") == 0) {
+                        config->namespaces |= CLONE_NEWCGROUP;
+                    } else if (strcmp(value, "time") == 0) {
+                        config->namespaces |= CLONE_NEWTIME;
+                    }
+                }
+            }
+        }
+
+        config->readonly_paths = NULL;
+
+        const cJSON *readonly_paths = cJSON_GetObjectItemCaseSensitive(linux_object, "readonlyPaths");
+        if (cJSON_IsArray(readonly_paths)) {
+            const int count = cJSON_GetArraySize(readonly_paths);
+
+            if (count > 0) {
+                config->readonly_paths = calloc(count + 1, sizeof(char *)); // paths + null termination
+                if (!config->readonly_paths) {
+                    perror("failed to allocate readonly paths");
+                    cJSON_Delete(config_file);
+
+                    return -1;
+                }
+
+                config->readonly_paths_count = 0;
+
+                const cJSON *path = NULL;
+                cJSON_ArrayForEach(path, readonly_paths) {
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        config->readonly_paths[config->readonly_paths_count++] = strdup(path->valuestring);
+                    }
+                }
+
+                config->readonly_paths[config->readonly_paths_count] = NULL; // add null termination
+            }
+        }
+
+        config->masked_paths = NULL;
+
+        const cJSON *masked_paths = cJSON_GetObjectItemCaseSensitive(linux_object, "maskedPaths");
+        if (cJSON_IsArray(masked_paths)) {
+            const int count = cJSON_GetArraySize(masked_paths);
+
+            if (count > 0) {
+                config->masked_paths = calloc(count + 1, sizeof(char *)); // paths + null termination
+                if (!config->masked_paths) {
+                    perror("failed to allocate masked paths");
+                    cJSON_Delete(config_file);
+
+                    return -1;
+                }
+
+                config->masked_paths_count = 0;
+
+                const cJSON *path = NULL;
+                cJSON_ArrayForEach(path, masked_paths) {
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        config->masked_paths[config->masked_paths_count++] = strdup(path->valuestring);
+                    }
+                }
+
+                config->masked_paths[config->masked_paths_count] = NULL; // add null termination
+            }
+        }
+
+        const cJSON *sysctl = cJSON_GetObjectItemCaseSensitive(linux_object, "sysctl");
+        if (cJSON_IsObject(sysctl)) {
+            const int count = cJSON_GetArraySize(sysctl);
+
+            if (count > 0) {
+                config->sysctl = calloc(count + 1, sizeof(object_t)); // object + null termination
+                if (!config->sysctl) {
+                    perror("failed to allocate sysctl");
+                    cJSON_Delete(config_file);
+
+                    return -1;
+                }
+
+                const cJSON *item = NULL;
+                int i = 0;
+                cJSON_ArrayForEach(item, sysctl) {
+                    if (cJSON_IsString(item) && item->valuestring && item->string) {
+                        config->sysctl[i].key = strdup(item->string);
+                        config->sysctl[i].value = strdup(item->valuestring);
+                        i++;
+                    }
+                }
+
+                config->sysctl_count = i;
+                config->sysctl[config->sysctl_count].key = NULL; // add null termination
+            }
+        }
     }
 
     const cJSON *readonly_fs = cJSON_GetObjectItemCaseSensitive(config_file, "readonlyFilesystem");
     if (cJSON_IsBool(readonly_fs)) {
         config->readonly_fs = cJSON_IsTrue(readonly_fs);
-    }
-
-    config->readonly_paths = NULL;
-
-    const cJSON *readonly_paths = cJSON_GetObjectItemCaseSensitive(config_file, "readonlyPaths");
-    if (cJSON_IsArray(readonly_paths)) {
-        const int count = cJSON_GetArraySize(readonly_paths);
-
-        if (count > 0) {
-            config->readonly_paths = calloc(count + 1, sizeof(char *)); // paths + null termination
-            if (!config->readonly_paths) {
-                perror("failed to allocate readonly paths");
-                cJSON_Delete(config_file);
-
-                return -1;
-            }
-
-            config->readonly_paths_count = 0;
-
-            const cJSON *path = NULL;
-            cJSON_ArrayForEach(path, readonly_paths) {
-                if (cJSON_IsString(path) && path->valuestring) {
-                    config->readonly_paths[config->readonly_paths_count++] = strdup(path->valuestring);
-                }
-            }
-
-            config->readonly_paths[config->readonly_paths_count] = NULL; // add null termination
-        }
-    }
-
-    config->masked_paths = NULL;
-
-    const cJSON *masked_paths = cJSON_GetObjectItemCaseSensitive(config_file, "maskedPaths");
-    if (cJSON_IsArray(masked_paths)) {
-        const int count = cJSON_GetArraySize(masked_paths);
-
-        if (count > 0) {
-            config->masked_paths = calloc(count + 1, sizeof(char *)); // paths + null termination
-            if (!config->masked_paths) {
-                perror("failed to allocate masked paths");
-                cJSON_Delete(config_file);
-
-                return -1;
-            }
-
-            config->masked_paths_count = 0;
-
-            const cJSON *path = NULL;
-            cJSON_ArrayForEach(path, masked_paths) {
-                if (cJSON_IsString(path) && path->valuestring) {
-                    config->masked_paths[config->masked_paths_count++] = strdup(path->valuestring);
-                }
-            }
-
-            config->masked_paths[config->masked_paths_count] = NULL; // add null termination
-        }
     }
 
     const cJSON *custom_hostname = cJSON_GetObjectItemCaseSensitive(config_file, "hostname");
@@ -245,32 +394,6 @@ int read_config(config_t *config) {
         config->cpu_limit = (uint64_t)cpu_limit->valuedouble;
     }
 
-    const cJSON *env_variables = cJSON_GetObjectItemCaseSensitive(config_file, "env");
-    if (cJSON_IsArray(env_variables)) {
-        const int count = cJSON_GetArraySize(env_variables);
-
-        if (count > 0) {
-            config->env_variables = calloc(count + 1, sizeof(char *)); // variables + null termination
-            if (!config->env_variables) {
-                perror("failed to allocate env variables");
-                cJSON_Delete(config_file);
-
-                return -1;
-            }
-
-            config->env_variables_count = 0;
-
-            const cJSON *variable = NULL;
-            cJSON_ArrayForEach(variable, env_variables) {
-                if (cJSON_IsString(variable) && variable->valuestring) {
-                    config->env_variables[config->env_variables_count++] = strdup(variable->valuestring);
-                }
-            }
-
-            config->env_variables[config->env_variables_count] = NULL; // add null termination
-        }
-    }
-
     config->pid_limit = 0;
 
     const cJSON *pids = cJSON_GetObjectItemCaseSensitive(config_file, "pids");
@@ -278,54 +401,6 @@ int read_config(config_t *config) {
         const cJSON *limit = cJSON_GetObjectItemCaseSensitive(pids, "limit");
         if (cJSON_IsNumber(limit)) {
             config->pid_limit = (uint64_t) limit->valuedouble;
-        }
-    }
-
-    const cJSON *namespaces = cJSON_GetObjectItemCaseSensitive(config_file, "namespaces");
-    if (cJSON_IsArray(namespaces)) {
-        const cJSON *namespace = NULL;
-
-        cJSON_ArrayForEach(namespace, namespaces) {
-            if (!cJSON_IsObject(namespace)) {
-                continue;
-            }
-
-            const cJSON *type = cJSON_GetObjectItemCaseSensitive(namespace, "type");
-            if (cJSON_IsString(type) && type->valuestring) {
-                const char *value = type->valuestring;
-
-                if (strcmp(value, "pid") == 0) {
-                    config->namespaces |= CLONE_NEWPID;
-                }
-
-                else if (strcmp(value, "network") == 0) {
-                    config->namespaces |= CLONE_NEWNET;
-                }
-
-                else if (strcmp(value, "mount") == 0) {
-                    config->namespaces |= CLONE_NEWNS;
-                }
-
-                else if (strcmp(value, "ipc") == 0) {
-                    config->namespaces |= CLONE_NEWIPC;
-                }
-
-                else if (strcmp(value, "uts") == 0) {
-                    config->namespaces |= CLONE_NEWUTS;
-                }
-
-                else if (strcmp(value, "user") == 0) {
-                    config->namespaces |= CLONE_NEWUSER;
-                }
-
-                else if (strcmp(value, "cgroup") == 0) {
-                    config->namespaces |= CLONE_NEWCGROUP;
-                }
-
-                else if (strcmp(value, "time") == 0) {
-                    config->namespaces |= CLONE_NEWTIME;
-                }
-            }
         }
     }
 
@@ -353,95 +428,11 @@ int read_config(config_t *config) {
         config->oom_score_adj = oom_score_adj->valueint;
     }
 
-    const cJSON *sysctl = cJSON_GetObjectItemCaseSensitive(config_file, "sysctl");
-    if (cJSON_IsObject(sysctl)) {
-        const int count = cJSON_GetArraySize(sysctl);
-
-        if (count > 0) {
-            config->sysctl = calloc(count + 1, sizeof(object_t)); // object + null termination
-            if (!config->sysctl) {
-                perror("failed to allocate sysctl");
-                cJSON_Delete(config_file);
-
-                return -1;
-            }
-
-            const cJSON *item = NULL;
-            int i = 0;
-            cJSON_ArrayForEach(item, sysctl) {
-                if (cJSON_IsString(item) && item->valuestring && item->string) {
-                    config->sysctl[i].key = strdup(item->string);
-                    config->sysctl[i].value = strdup(item->valuestring);
-                    i++;
-                }
-            }
-
-            config->sysctl_count = i;
-            config->sysctl[config->sysctl_count].key = NULL; // add null termination
-        }
-    }
-
     config->umask = -1;
 
     const cJSON *umask = cJSON_GetObjectItemCaseSensitive(config_file, "umask");
     if (cJSON_IsNumber(umask)) {
         config->umask = umask->valueint;
-    }
-
-    const cJSON *devices = cJSON_GetObjectItemCaseSensitive(config_file, "devices");
-    if (cJSON_IsArray(devices)) {
-        const int count = cJSON_GetArraySize(devices);
-        if (count > 0) {
-            config->devices = malloc(sizeof(device_t) * count);
-            config->devices_count = count;
-
-            for (int i = 0; i < count; i++) {
-                const cJSON *device = cJSON_GetArrayItem(devices, i);
-
-                const cJSON *path = cJSON_GetObjectItemCaseSensitive(device, "path");
-                if (cJSON_IsString(path) && path->valuestring) {
-                    strncpy(config->devices[i].path, path->valuestring, sizeof(config->devices[i].path) - 1);
-                    config->devices[i].path[sizeof(config->devices[i].path) - 1] = '\0';
-                } else {
-                    config->devices[i].path[0] = '\0';
-                }
-
-                const cJSON *allow = cJSON_GetObjectItemCaseSensitive(device, "allow");
-                if (cJSON_IsBool(allow)) {
-                    config->devices[i].allow = cJSON_IsTrue(allow);
-                } else {
-                    config->devices[i].allow = 0;
-                }
-
-                const cJSON *access = cJSON_GetObjectItemCaseSensitive(device, "access");
-                if (cJSON_IsString(access) && access->valuestring) {
-                    strncpy(config->devices[i].access, access->valuestring, sizeof(config->devices[i].access) - 1);
-                    config->devices[i].access[sizeof(config->devices[i].access) - 1] = '\0';
-                } else {
-                    config->devices[i].access[0] = '\0';
-                }
-
-                config->devices[i].uid = 0;
-                config->devices[i].gid = 0;
-
-                const cJSON *device_uid = cJSON_GetObjectItemCaseSensitive(device, "uid");
-                if (cJSON_IsNumber(device_uid)) {
-                    config->devices[i].uid = (uint32_t)device_uid->valuedouble;
-                }
-
-                const cJSON *device_gid = cJSON_GetObjectItemCaseSensitive(device, "gid");
-                if (cJSON_IsNumber(device_gid)) {
-                    config->devices[i].gid = (uint32_t)device_gid->valuedouble;
-                }
-
-                config->devices[i].file_mode = 0666;
-
-                const cJSON *file_mode = cJSON_GetObjectItemCaseSensitive(device, "fileMode");
-                if (cJSON_IsNumber(file_mode)) {
-                    config->devices[i].file_mode = (uint32_t)file_mode->valuedouble;
-                }
-            }
-        }
     }
 
     // delete json object
