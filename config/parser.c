@@ -324,9 +324,21 @@ int read_config(config_t *config) {
         }
     }
 
-    const cJSON *readonly_fs = cJSON_GetObjectItemCaseSensitive(config_file, "readonlyFilesystem");
-    if (cJSON_IsBool(readonly_fs)) {
-        config->readonly_fs = cJSON_IsTrue(readonly_fs);
+    snprintf(config->rootfs_path, sizeof(config->rootfs_path), "rootfs");
+    config->readonly_fs = false;
+
+    const cJSON *root = cJSON_GetObjectItemCaseSensitive(config_file, "root");
+    if (cJSON_IsObject(root)) {
+        const cJSON *path = cJSON_GetObjectItemCaseSensitive(root, "path");
+
+        if (cJSON_IsString(path) && path->valuestring) {
+            snprintf(config->rootfs_path, sizeof(config->rootfs_path), "%s", path->valuestring);
+        }
+
+        const cJSON *readonly_fs = cJSON_GetObjectItemCaseSensitive(root, "readonly");
+        if (cJSON_IsBool(readonly_fs)) {
+            config->readonly_fs = cJSON_IsTrue(readonly_fs);
+        }
     }
 
     const cJSON *custom_hostname = cJSON_GetObjectItemCaseSensitive(config_file, "hostname");

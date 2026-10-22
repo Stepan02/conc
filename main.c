@@ -75,6 +75,7 @@ static int container_runtime(void *arg) {
     const int umask_value = (int)args[14];
     const device_t *devices = (const device_t *)args[15];
     const int devices_count = (int)args[16];
+    const char *rootfs_path = (const char *)args[17];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -87,22 +88,19 @@ static int container_runtime(void *arg) {
     }
 
     // resolve rootfs path
-    char current_path[PATH_MAX];
-    if (getcwd(current_path, sizeof(current_path)) == NULL) {
-        fprintf(stderr, "failed to get current working directory\n");
+    char full_rootfs_path[PATH_MAX];
+    if (realpath(rootfs_path, full_rootfs_path) == NULL) {
+        fprintf(stderr, "failed to resolve full rootfs path\n");
         _exit(1);
     }
-
-    char rootfs_path[PATH_MAX + 64];
-    snprintf(rootfs_path, sizeof(rootfs_path), "%s/rootfs", current_path);
 
     // check rootfs
-    if (access(rootfs_path, F_OK) < 0) {
-        fprintf(stderr, "rootfs not found in %s\n", rootfs_path);
+    if (access(full_rootfs_path, F_OK) < 0) {
+        fprintf(stderr, "rootfs not found in %s\n", full_rootfs_path);
         _exit(1);
     }
 
-    if (mount_overlayfs(rootfs_path, container_name, disk_limit) == -1) {
+    if (mount_overlayfs(full_rootfs_path, container_name, disk_limit) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
         _exit(1);
     }
@@ -626,10 +624,12 @@ static int create_container(char *argv[]) {
     const uintptr_t devices = (uintptr_t)config.devices;
     const int devices_count = config.devices_count;
 
+    const char *rootfs_path = config.rootfs_path;
+
     // clone child
-    uintptr_t child_args[17] = {
+    uintptr_t child_args[18] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count
+        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count, rootfs_path
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

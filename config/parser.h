@@ -6,6 +6,7 @@
 
 typedef struct {
     bool shell_mode;
+    char rootfs_path[PATH_MAX];
     bool readonly_fs;
     char custom_hostname[256];
     int uid;
