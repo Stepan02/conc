@@ -203,6 +203,27 @@ int read_config(config_t *config) {
                     }
                 }
             }
+
+            const cJSON *ram_limit = cJSON_GetObjectItemCaseSensitive(resources, "ram");
+            if (cJSON_IsNumber(ram_limit)) {
+                config->ram_limit = (uint64_t)ram_limit->valuedouble;
+            }
+
+            const cJSON *cpu_limit = cJSON_GetObjectItemCaseSensitive(resources, "cpu");
+            if (cJSON_IsNumber(cpu_limit)) {
+                config->cpu_limit = (uint64_t)cpu_limit->valuedouble;
+            }
+
+            config->pid_limit = 0;
+
+            const cJSON *pids = cJSON_GetObjectItemCaseSensitive(resources, "pids");
+            if (cJSON_IsObject(pids)) {
+                const cJSON *limit = cJSON_GetObjectItemCaseSensitive(pids, "limit");
+                if (cJSON_IsNumber(limit)) {
+                    config->pid_limit = (uint64_t) limit->valuedouble;
+                }
+            }
+
         }
 
         const cJSON *namespaces = cJSON_GetObjectItemCaseSensitive(linux_object, "namespaces");
@@ -394,26 +415,6 @@ int read_config(config_t *config) {
         config->command[0] = strdup("/bin/sh");
         config->command[1] = NULL;
         config->command_args_count = 1;
-    }
-
-    const cJSON *ram_limit = cJSON_GetObjectItemCaseSensitive(config_file, "ram");
-    if (cJSON_IsNumber(ram_limit)) {
-        config->ram_limit = (uint64_t)ram_limit->valuedouble;
-    }
-
-    const cJSON *cpu_limit = cJSON_GetObjectItemCaseSensitive(config_file, "cpu");
-    if (cJSON_IsNumber(cpu_limit)) {
-        config->cpu_limit = (uint64_t)cpu_limit->valuedouble;
-    }
-
-    config->pid_limit = 0;
-
-    const cJSON *pids = cJSON_GetObjectItemCaseSensitive(config_file, "pids");
-    if (cJSON_IsObject(pids)) {
-        const cJSON *limit = cJSON_GetObjectItemCaseSensitive(pids, "limit");
-        if (cJSON_IsNumber(limit)) {
-            config->pid_limit = (uint64_t) limit->valuedouble;
-        }
     }
 
     config->console_height = 24;
