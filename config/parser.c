@@ -69,39 +69,42 @@ int read_config(config_t *config) {
             config->shell_mode = cJSON_IsTrue(terminal);
         }
 
-        const cJSON *uid = cJSON_GetObjectItemCaseSensitive(process, "uid");
-        if (cJSON_IsNumber(uid)) {
-            config->uid = (uint32_t)uid->valuedouble;
-        }
-
-        const cJSON *gid = cJSON_GetObjectItemCaseSensitive(process, "gid");
-        if (cJSON_IsNumber(gid)) {
-            config->gid = (uint32_t)gid->valuedouble;
-        }
-
         // no additional gids by default
         config->additional_gids = NULL;
         config->additional_gids_count = 0;
 
-        const cJSON *additional_gids = cJSON_GetObjectItemCaseSensitive(process, "additionalGids");
-        if (cJSON_IsArray(additional_gids)) {
-            const int count = cJSON_GetArraySize(additional_gids);
+        const cJSON *user = cJSON_GetObjectItemCaseSensitive(process, "user");
+        if (cJSON_IsObject(user)) {
+            const cJSON *uid = cJSON_GetObjectItemCaseSensitive(user, "uid");
+            if (cJSON_IsNumber(uid)) {
+                config->uid = (uint32_t)uid->valuedouble;
+            }
 
-            if (count > 0) {
-                config->additional_gids = calloc(count + 1, sizeof(gid_t)); // gids + null termination
-                if (!config->additional_gids) {
-                    perror("failed to allocate additional gids");
-                    cJSON_Delete(config_file);
+            const cJSON *gid = cJSON_GetObjectItemCaseSensitive(user, "gid");
+            if (cJSON_IsNumber(gid)) {
+                config->gid = (uint32_t)gid->valuedouble;
+            }
 
-                    return -1;
-                }
+            const cJSON *additional_gids = cJSON_GetObjectItemCaseSensitive(user, "additionalGids");
+            if (cJSON_IsArray(additional_gids)) {
+                const int count = cJSON_GetArraySize(additional_gids);
 
-                config->additional_gids_count = 0;
+                if (count > 0) {
+                    config->additional_gids = calloc(count + 1, sizeof(gid_t)); // gids + null termination
+                    if (!config->additional_gids) {
+                        perror("failed to allocate additional gids");
+                        cJSON_Delete(config_file);
 
-                const cJSON *additional_gid = NULL;
-                cJSON_ArrayForEach(additional_gid, additional_gids) {
-                    if (cJSON_IsNumber(additional_gid)) {
-                        config->additional_gids[config->additional_gids_count++] = additional_gid->valueint;
+                        return -1;
+                    }
+
+                    config->additional_gids_count = 0;
+
+                    const cJSON *additional_gid = NULL;
+                    cJSON_ArrayForEach(additional_gid, additional_gids) {
+                        if (cJSON_IsNumber(additional_gid)) {
+                            config->additional_gids[config->additional_gids_count++] = additional_gid->valueint;
+                        }
                     }
                 }
             }
