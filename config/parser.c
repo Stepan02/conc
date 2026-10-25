@@ -494,4 +494,27 @@ void free_config(config_t *config) {
         free(config->devices);
         config->devices = NULL;
     }
+
+    if (config->additional_gids != NULL) {
+        free(config->additional_gids);
+        config->additional_gids = NULL;
+    }
+
+    if (config->readonly_paths != NULL) {
+        for (int i = 0; i < config->readonly_paths_count; i++) {
+            free(config->readonly_paths[i]);
+        }
+
+        free(config->readonly_paths);
+        config->readonly_paths = NULL;
+    }
+
+    if (config->masked_paths != NULL) {
+        for (int i = 0; i < config->masked_paths_count; i++) {
+            free(config->masked_paths[i]);
+        }
+
+        free(config->masked_paths);
+        config->masked_paths = NULL;
+    }
 }
