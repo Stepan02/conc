@@ -312,6 +312,11 @@ static int container_runtime(void *arg) {
         perror("hostname");
     }
 
+    // set oom score limit
+    if (set_limits(oom_score_adj) < 0) {
+        _exit(1);
+    }
+
     // set environment variables
     clearenv();
 
@@ -388,11 +393,6 @@ static int container_runtime(void *arg) {
             perror("setuid");
             _exit(1);
         }
-    }
-
-    // set oom score limit
-    if (set_limits(oom_score_adj) < 0) {
-        _exit(1);
     }
 
     // set umask if specified

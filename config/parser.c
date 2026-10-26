@@ -108,6 +108,13 @@ int read_config(config_t *config) {
                     }
                 }
             }
+
+            config->umask = -1;
+
+            const cJSON *umask = cJSON_GetObjectItemCaseSensitive(user, "umask");
+            if (cJSON_IsNumber(umask)) {
+                config->umask = umask->valueint;
+            }
         }
 
         const cJSON *cwd = cJSON_GetObjectItemCaseSensitive(process, "cwd");
@@ -143,6 +150,23 @@ int read_config(config_t *config) {
                 }
 
                 config->env_variables[config->env_variables_count] = NULL; // add null termination
+            }
+        }
+
+        config->console_height = 24;
+        config->console_width = 80;
+
+        const cJSON *console_size = cJSON_GetObjectItemCaseSensitive(process, "consoleSize");
+        if (cJSON_IsObject(console_size)) {
+            const cJSON *height = cJSON_GetObjectItemCaseSensitive(console_size, "height");
+            const cJSON *width = cJSON_GetObjectItemCaseSensitive(console_size, "width");
+
+            if (cJSON_IsNumber(width)) {
+                config->console_width = width->valueint;
+            }
+
+            if (cJSON_IsNumber(height)) {
+                config->console_height = height->valueint;
             }
         }
     }
@@ -227,6 +251,12 @@ int read_config(config_t *config) {
                 }
             }
 
+            config->oom_score_adj = 0;
+
+            const cJSON *oom_score_adj = cJSON_GetObjectItemCaseSensitive(resources, "oomScoreAdj");
+            if (cJSON_IsNumber(oom_score_adj)) {
+                config->oom_score_adj = oom_score_adj->valueint;
+            }
         }
 
         const cJSON *namespaces = cJSON_GetObjectItemCaseSensitive(linux_object, "namespaces");
@@ -418,37 +448,6 @@ int read_config(config_t *config) {
         config->command[0] = strdup("/bin/sh");
         config->command[1] = NULL;
         config->command_args_count = 1;
-    }
-
-    config->console_height = 24;
-    config->console_width = 80;
-
-    const cJSON *console_size = cJSON_GetObjectItemCaseSensitive(config_file, "consoleSize");
-    if (cJSON_IsObject(console_size)) {
-        const cJSON *height = cJSON_GetObjectItemCaseSensitive(console_size, "height");
-        const cJSON *width = cJSON_GetObjectItemCaseSensitive(console_size, "width");
-
-        if (cJSON_IsNumber(width)) {
-            config->console_width = width->valueint;
-        }
-
-        if (cJSON_IsNumber(height)) {
-            config->console_height = height->valueint;
-        }
-    }
-
-    config->oom_score_adj = 0;
-
-    const cJSON *oom_score_adj = cJSON_GetObjectItemCaseSensitive(config_file, "oomScoreAdj");
-    if (cJSON_IsNumber(oom_score_adj)) {
-        config->oom_score_adj = oom_score_adj->valueint;
-    }
-
-    config->umask = -1;
-
-    const cJSON *umask = cJSON_GetObjectItemCaseSensitive(config_file, "umask");
-    if (cJSON_IsNumber(umask)) {
-        config->umask = umask->valueint;
     }
 
     // delete json object
