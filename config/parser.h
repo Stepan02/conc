@@ -37,7 +37,15 @@ typedef struct {
     int devices_count;
 } config_t;
 
-int read_config(config_t *config);
+typedef struct {
+    char oci_version[64];
+    char container_id[256];
+    char status[64];
+    int pid;
+    char bundle_path[PATH_MAX];
+} state_t;
+
+int read_config(config_t *config, const char *bundle_path);
 void free_config(config_t *config);
 
 #endif //SANDBOX_PARSER_H

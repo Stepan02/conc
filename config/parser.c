@@ -8,16 +8,18 @@
 #include <sched.h>
 #include "../libs/cJSON.h"
 
-int read_config(config_t *config) {
+int read_config(config_t *config, const char *bundle_path) {
     char config_path[PATH_MAX * 2];
-    char current_working_directory[PATH_MAX];
 
-    if (getcwd(current_working_directory, sizeof(current_working_directory)) == NULL) {
-        perror("getcwd");
-        return -1;
+    if (bundle_path) {
+        snprintf(config_path, sizeof(config_path), "%s/config.json", bundle_path);
+    } else {
+        // use current working directory as a bundle path if no bundle path is provided
+        char current_working_directory[PATH_MAX];
+        getcwd(current_working_directory, sizeof(current_working_directory));
+
+        snprintf(config_path, sizeof(config_path), "%s/config.json", current_working_directory);
     }
-
-    snprintf(config_path, sizeof(config_path), "%s/config.json", current_working_directory);
 
     // clear config_t
     free_config(config);

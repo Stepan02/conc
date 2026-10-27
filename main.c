@@ -409,7 +409,7 @@ static int container_runtime(void *arg) {
     return 0;
 }
 
-static int create_container(char *argv[]) {
+static int create_container(char *argv[], int argc) {
     // default values
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
@@ -420,12 +420,26 @@ static int create_container(char *argv[]) {
     int console_width = 80; // default console columns
 
     // save container name
-    snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+    if (argc > 1) {
+        snprintf(container_name, sizeof(container_name), "%s", argv[argc - 1]);
+    } else {
+        snprintf(container_name, sizeof(container_name), "%s", argv[0]);
+    }
+
+    char *bundle_set_value = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        // parse bundle flag
+        if (strcmp(argv[i], "--bundle") == 0 && i + 1 < argc - 1) {
+            bundle_set_value = argv[i + 1];
+            i++; // skip path value next loop
+        }
+    }
 
     // read container config
     config_t config = {0};
 
-    if (read_config(&config) < 0) {
+    if (read_config(&config, bundle_set_value) < 0) {
         perror("read config");
         return 1;
     }
@@ -490,6 +504,29 @@ static int create_container(char *argv[]) {
         }
 
         close(shell_mode_fd);
+    }
+
+    // write bundle path to a file
+    char bundle_path[PATH_MAX];
+    snprintf(bundle_path, sizeof(bundle_path), "%s/bundle-path", base_dir);
+
+    char bundle_path_value[512];
+    if (bundle_set_value) {
+        snprintf(bundle_path_value, sizeof(bundle_path_value), "%s", bundle_set_value);
+    } else {
+        // use current working directory as a bundle path if no bundle path is provided
+        getcwd(bundle_path_value, sizeof(bundle_path_value));
+    }
+
+    const int bundle_path_fd = open(bundle_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (bundle_path_fd != -1) {
+        if (write(bundle_path_fd, bundle_path_value, strlen(bundle_path_value)) < 0) {
+            perror("failed to set bundle path");
+            close(bundle_path_fd);
+            return 1;
+        }
+
+        close(bundle_path_fd);
     }
 
     // write console size to a file
@@ -624,12 +661,19 @@ static int create_container(char *argv[]) {
     const uintptr_t devices = (uintptr_t)config.devices;
     const int devices_count = config.devices_count;
 
-    const char *rootfs_path = config.rootfs_path;
+    char rootfs_path[PATH_MAX];
+
+    if (config.rootfs_path[0] == '/') {
+        // set rootfs path relative to bundle path if it is not absolute
+        snprintf(rootfs_path, sizeof(rootfs_path), "%s", config.rootfs_path);
+    } else {
+        snprintf(rootfs_path, sizeof(rootfs_path), "%s/%s", bundle_path_value, config.rootfs_path);
+    }
 
     // clone child
     uintptr_t child_args[18] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count, rootfs_path
+        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count, (uintptr_t)rootfs_path
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
@@ -1029,6 +1073,88 @@ static int delete_container() {
     return 0;
 }
 
+static state_t get_container_state() {
+    // create state object
+    state_t state = {0};
+
+    // check whether the container exists
+    char container_directory[512];
+    snprintf(container_directory, sizeof(container_directory), "/tmp/runner-%s", container_name);
+
+    if (access(container_directory, F_OK) < 0) {
+        fprintf(stderr, "container does not exist\n");
+        _exit(1);
+    }
+
+    // get container status
+    char container_pid_path[PATH_MAX];
+    snprintf(container_pid_path, sizeof(container_pid_path), "%s/container.pid", container_directory);
+
+    char container_exit_code_path[PATH_MAX];
+    snprintf(container_exit_code_path, sizeof(container_exit_code_path), "%s/exit-code", container_directory);
+
+    char container_sync_socket_path[PATH_MAX];
+    snprintf(container_sync_socket_path, sizeof(container_sync_socket_path), "%s/sync.sock", container_directory);
+
+    char container_bundle_path[PATH_MAX];
+    snprintf(container_bundle_path, sizeof(container_bundle_path), "%s/bundle-path", container_directory);
+
+    if (access(container_pid_path, F_OK) == 0) {
+        snprintf(state.status, sizeof(state.status), "running");
+
+        // get container pid
+        const int fd = open(container_pid_path, O_RDONLY);
+        if (fd < 0) {
+            perror("open container pid");
+            _exit(1);
+        }
+
+        char pid_buffer[32] = {0};
+        const ssize_t bytes = read(fd, pid_buffer, sizeof(pid_buffer) - 1);
+        close(fd);
+
+        if (bytes <= 0) {
+            fprintf(stderr, "read container pid\n");
+            _exit(1);
+        }
+
+        const pid_t pid = (pid_t) strtol(pid_buffer, NULL, 10);
+
+        state.pid = pid;
+    }
+
+    else if (access(container_exit_code_path, F_OK) == 0) {
+        snprintf(state.status, sizeof(state.status), "stopped");
+    }
+
+    else if (access(container_sync_socket_path, F_OK) == 0) {
+        snprintf(state.status, sizeof(state.status), "created");
+    }
+
+    // set container id
+    snprintf(state.container_id, sizeof(state.container_id), "%s", container_name);
+
+    // set container bundle path
+    const int fd = open(container_bundle_path, O_RDONLY);
+    if (fd < 0) {
+        perror("open container bundle path");
+        _exit(1);
+    }
+
+    char path_buffer[PATH_MAX] = {0};
+    const ssize_t bytes = read(fd, path_buffer, sizeof(path_buffer) - 1);
+    close(fd);
+
+    if (bytes <= 0) {
+        fprintf(stderr, "read container bundle path\n");
+        _exit(1);
+    }
+
+    snprintf(state.bundle_path, sizeof(state.bundle_path), "%s", path_buffer);
+
+    return state;
+}
+
 int main(const int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "please specify a command\n");
@@ -1042,7 +1168,7 @@ int main(const int argc, char *argv[]) {
             return 1;
         }
 
-        return create_container(argv);
+        return create_container(argv, argc);
     }
 
     // start command
@@ -1083,6 +1209,29 @@ int main(const int argc, char *argv[]) {
         snprintf(container_name, sizeof(container_name), "%s", argv[2]);
 
         return delete_container();
+    }
+
+    // state command
+    if (strcmp(argv[1], "state") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
+
+        snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+        state_t state = get_container_state();
+
+        printf("{\n");
+        printf("  \"ociVersion\": \"1.0.2\",\n");
+        printf("  \"id\": \"%s\",\n", state.container_id);
+        printf("  \"status\": \"%s\",\n", state.status);
+        if (state.pid > 0) {
+            printf("  \"pid\": %d,\n", state.pid);
+        }
+        printf("  \"bundle\": \"%s\"\n", state.bundle_path);
+        printf("}\n");
+
+        return 0;
     }
 
     fprintf(stderr, "unknown command %s\n", argv[1]);
