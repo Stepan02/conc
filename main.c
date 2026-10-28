@@ -154,8 +154,8 @@ static int container_runtime(void *arg) {
 
     // mount devices
     for (int i = 0; i < devices_count; i++) {
-        // ignore disallowed devices
-        if (!devices[i].allow) {
+        // ignore disallowed devices or global policy
+        if (!devices[i].allow || devices[i].path[0] == '\0') {
             continue;
         }
 
@@ -427,11 +427,25 @@ static int create_container(char *argv[], int argc) {
     }
 
     char *bundle_set_value = NULL;
+    char *console_socket_path = NULL;
+    char *pid_file_path = NULL;
 
     for (int i = 2; i < argc; i++) {
         // parse bundle flag
-        if (strcmp(argv[i], "--bundle") == 0 && i + 1 < argc - 1) {
+        if (strcmp(argv[i], "--bundle") == 0 && i + 1 < argc) {
             bundle_set_value = argv[i + 1];
+            i++; // skip path value next loop
+        }
+
+        // parse console-socket flag
+        if (strcmp(argv[i], "--console-socket") == 0 && i + 1 < argc) {
+            console_socket_path = argv[i + 1];
+            i++; // skip path value next loop
+        }
+
+        // parse pid-file flag
+        if (strcmp(argv[i], "--pid-file") == 0 && i + 1 < argc) {
+            pid_file_path = argv[i + 1];
             i++; // skip path value next loop
         }
     }
@@ -599,11 +613,52 @@ static int create_container(char *argv[], int argc) {
             fclose(f_pid);
         }
 
-        printf("%s\n", container_name);
+        // save supervisor pid to pid file
+        if (pid_file_path) {
+            FILE *f_pid_set = fopen(pid_file_path, "w");
+
+            if (f_pid_set) {
+                fprintf(f_pid_set, "%d\n", supervisor_pid);
+                fclose(f_pid_set);
+            }
+        }
+
+        // console socket handshake
+        if (console_socket_path && console_socket_path[0] != '\0') {
+            int master_fd = -1;
+            int slave_fd = -1;
+
+            if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) == 0) {
+                int console_socket = socket(AF_UNIX, SOCK_STREAM, 0);
+                if (console_socket >= 0) {
+                    struct sockaddr_un console_address = {0};
+                    console_address.sun_family = AF_UNIX;
+                    strncpy(console_address.sun_path, console_socket_path, sizeof(console_address.sun_path) - 1);
+
+                    if (connect(console_socket, (struct sockaddr *)&console_address, sizeof(console_address)) == 0) {
+                        send_fd(console_socket, master_fd);
+                    }
+
+                    close(console_socket);
+                }
+
+                close(master_fd);
+                close(slave_fd);
+            }
+        }
+
+        fprintf(stdout, "{\n");
+        fprintf(stdout, "  \"ociVersion\": \"1.0.2\",\n");
+        fprintf(stdout, "  \"id\": \"%s\",\n", container_name);
+        fprintf(stdout, "  \"status\": \"created\",\n");
+        fprintf(stdout, "  \"bundle\": \"%s\"\n", bundle_path_value);
+        fprintf(stdout, "}\n");
+        fflush(stdout);
+
         close(socket_fd);
         free(env_variables);
         free_config(&config);
-        return 0;
+        _exit(0);
     }
 
     // disconnect from shell

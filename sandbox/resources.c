@@ -62,23 +62,25 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
 
-    // set ram limit
-    const uint64_t memory_bytes = ram_mb * 1024 * 1024;
-    sd_bus_message_open_container(m, 'r', "sv");
-    sd_bus_message_append(m, "s", "MemoryMax");
-    sd_bus_message_open_container(m, 'v', "t");
-    sd_bus_message_append(m, "t", memory_bytes);
-    sd_bus_message_close_container(m);
-    sd_bus_message_close_container(m);
+    // set ram limit if set
+    if (ram_mb > 0) {
+        const uint64_t memory_bytes = ram_mb * 1024 * 1024;
+        sd_bus_message_open_container(m, 'r', "sv");
+        sd_bus_message_append(m, "s", "MemoryMax");
+        sd_bus_message_open_container(m, 'v', "t");
+        sd_bus_message_append(m, "t", memory_bytes);
+        sd_bus_message_close_container(m);
+        sd_bus_message_close_container(m);
 
-    // set ram high limit to 90% of ram limit
-    const uint64_t memory_high_bytes = (memory_bytes * 9) / 10;
-    sd_bus_message_open_container(m, 'r', "sv");
-    sd_bus_message_append(m, "s", "MemoryHigh");
-    sd_bus_message_open_container(m, 'v', "t");
-    sd_bus_message_append(m, "t", memory_high_bytes);
-    sd_bus_message_close_container(m);
-    sd_bus_message_close_container(m);
+        // set ram high limit to 90% of ram limit
+        const uint64_t memory_high_bytes = (memory_bytes * 9) / 10;
+        sd_bus_message_open_container(m, 'r', "sv");
+        sd_bus_message_append(m, "s", "MemoryHigh");
+        sd_bus_message_open_container(m, 'v', "t");
+        sd_bus_message_append(m, "t", memory_high_bytes);
+        sd_bus_message_close_container(m);
+        sd_bus_message_close_container(m);
+    }
 
     // disable swap
     sd_bus_message_open_container(m, 'r', "sv");
@@ -97,7 +99,7 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
     sd_bus_message_close_container(m);
     sd_bus_message_close_container(m);
 
-    // set cpu limit
+    // set cpu limit if set
     if (cpu_us > 0) {
         sd_bus_message_open_container(m, 'r', "sv");
         sd_bus_message_append(m, "s", "CPUQuotaPerSecUSec");
@@ -166,6 +168,9 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
 
     sd_bus_message_open_container(m, 'a', "(sa(sv))");
     sd_bus_message_close_container(m);
+
+    // disable interactive authorization
+    sd_bus_message_set_allow_interactive_authorization(m, 0);
 
     // send message to systemd
     r = sd_bus_call(bus, m, 0, &error, NULL);
