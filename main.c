@@ -602,10 +602,11 @@ static int create_container(char *argv[], int argc) {
         return 1;
     }
 
+    char supervisor_pid_path[512];
+    snprintf(supervisor_pid_path, sizeof(supervisor_pid_path), "%s/supervisor.pid", base_dir);
+
     if (supervisor_pid > 0) {
         // save supervisor pid
-        char supervisor_pid_path[512];
-        snprintf(supervisor_pid_path, sizeof(supervisor_pid_path), "%s/supervisor.pid", base_dir);
         FILE *f_pid = fopen(supervisor_pid_path, "w");
 
         if (f_pid) {
@@ -833,6 +834,9 @@ static int create_container(char *argv[], int argc) {
 
     // delete container.pid file
     unlink(container_pid_path);
+
+    // delete supervisor.pid file
+    unlink(supervisor_pid_path);
 
     // clear environment variables and config
     free(env_variables);
