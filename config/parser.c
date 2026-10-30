@@ -233,14 +233,20 @@ int read_config(config_t *config, const char *bundle_path) {
                 }
             }
 
-            const cJSON *ram_limit = cJSON_GetObjectItemCaseSensitive(resources, "ram");
-            if (cJSON_IsNumber(ram_limit)) {
-                config->ram_limit = (uint64_t)ram_limit->valuedouble;
+            const cJSON *memory = cJSON_GetObjectItemCaseSensitive(resources, "memory");
+            if (cJSON_IsObject(memory)) {
+                const cJSON *limit = cJSON_GetObjectItemCaseSensitive(memory, "limit");
+                if (cJSON_IsNumber(limit)) {
+                    config->ram_limit = (uint64_t)limit->valuedouble;
+                }
             }
 
-            const cJSON *cpu_limit = cJSON_GetObjectItemCaseSensitive(resources, "cpu");
-            if (cJSON_IsNumber(cpu_limit)) {
-                config->cpu_limit = (uint64_t)cpu_limit->valuedouble;
+            const cJSON *cpu = cJSON_GetObjectItemCaseSensitive(resources, "cpu");
+            if (cJSON_IsObject(cpu)) {
+                const cJSON *quota = cJSON_GetObjectItemCaseSensitive(cpu, "quota");
+                if (cJSON_IsNumber(quota)) {
+                    config->cpu_limit = (uint64_t)quota->valuedouble;
+                }
             }
 
             config->pid_limit = 0;

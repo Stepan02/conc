@@ -9,7 +9,7 @@
 #include <linux/limits.h>
 #include "include/types.h"
 
-int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint64_t cpu_us, const uint64_t pid_limit, const device_t *devices, const int device_count) {
+int allocate_resources(const pid_t child_pid, const uint64_t ram_bytes, const uint64_t cpu_us, const uint64_t pid_limit, const device_t *devices, const int device_count) {
     sd_bus *bus = NULL;
     sd_bus_message *m = NULL;
     sd_bus_error error = SD_BUS_ERROR_NULL;
@@ -63,17 +63,16 @@ int allocate_resources(const pid_t child_pid, const uint64_t ram_mb, const uint6
     sd_bus_message_close_container(m);
 
     // set ram limit if set
-    if (ram_mb > 0) {
-        const uint64_t memory_bytes = ram_mb * 1024 * 1024;
+    if (ram_bytes > 0) {
         sd_bus_message_open_container(m, 'r', "sv");
         sd_bus_message_append(m, "s", "MemoryMax");
         sd_bus_message_open_container(m, 'v', "t");
-        sd_bus_message_append(m, "t", memory_bytes);
+        sd_bus_message_append(m, "t", ram_bytes);
         sd_bus_message_close_container(m);
         sd_bus_message_close_container(m);
 
         // set ram high limit to 90% of ram limit
-        const uint64_t memory_high_bytes = (memory_bytes * 9) / 10;
+        const uint64_t memory_high_bytes = (ram_bytes * 9) / 10;
         sd_bus_message_open_container(m, 'r', "sv");
         sd_bus_message_append(m, "s", "MemoryHigh");
         sd_bus_message_open_container(m, 'v', "t");
