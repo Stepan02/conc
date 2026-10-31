@@ -149,6 +149,11 @@ static int container_runtime(void *arg) {
         perror("bind mount /proc/sys");
     }
 
+    // set sysctl flags
+    if (setup_sysctl(sysctl, sysctl_count) < 0) {
+        _exit(1);
+    }
+
     snprintf(path, sizeof(path), "%s/dev", merged);
     mkdir(path, 0755);
 
@@ -371,11 +376,6 @@ static int container_runtime(void *arg) {
         }
     }
 
-    // set sysctl flags
-    if (setup_sysctl(sysctl, sysctl_count) < 0) {
-        _exit(1);
-    }
-
     // set groups
     if (setgroups(additional_gids_count, (const gid_t *)additional_gids) < 0) {
         perror("setgroups");
@@ -413,7 +413,7 @@ static int create_container(char *argv[], int argc) {
     // default values
     int ram_limit = 256; // mb
     int cpu_limit = 100000; // us
-    char custom_hostname[64] = "";
+    char custom_hostname[256] = "";
     int readonly_fs = 0; // filesystem is writable by default
     int no_new_privileges = 1; // disallow elevating privileges by default
     int console_height = 24; // default console rows
