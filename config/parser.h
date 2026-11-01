@@ -35,6 +35,9 @@ typedef struct {
     int umask;
     device_t *devices;
     int devices_count;
+    int disk_limit;
+    object_t *annotations;
+    int annotations_count;
 } config_t;
 
 typedef struct {

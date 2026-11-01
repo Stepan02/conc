@@ -56,7 +56,7 @@ int remove_directory(const char *path) {
         return -1;
     }
 
-    size_t path_len = strlen(path);
+    const size_t path_len = strlen(path);
     int r = 0;
     struct dirent *p;
 
@@ -138,7 +138,8 @@ int mount_overlayfs(const char *rootfs_path, const char *container_name, const i
 
     // set disk limit
     char mount_options[64];
-    snprintf(mount_options, sizeof(mount_options), "size=%dM", disk_limit);
+    const long long disk_limit_bytes = (long long)disk_limit * 1024 * 1024;
+    snprintf(mount_options, sizeof(mount_options), "size=%lld", disk_limit_bytes);
     if (mount("tmpfs", base_directory, "tmpfs", 0, mount_options) == -1) {
         perror("mount tmpfs");
         return -1;

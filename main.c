@@ -76,6 +76,7 @@ static int container_runtime(void *arg) {
     const device_t *devices = (const device_t *)args[15];
     const int devices_count = (int)args[16];
     const char *rootfs_path = (const char *)args[17];
+    const int disk_size = (int)args[18];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -100,7 +101,7 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
-    if (mount_overlayfs(full_rootfs_path, container_name, disk_limit) == -1) {
+    if (mount_overlayfs(full_rootfs_path, container_name, disk_size) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
         _exit(1);
     }
@@ -479,6 +480,7 @@ static int create_container(char *argv[], int argc) {
 
     ram_limit = config.ram_limit;
     cpu_limit = config.cpu_limit;
+    disk_limit = config.disk_limit;
 
     uid = config.uid;
     gid = config.gid;
@@ -727,9 +729,10 @@ static int create_container(char *argv[], int argc) {
     }
 
     // clone child
-    uintptr_t child_args[18] = {
+    uintptr_t child_args[19] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count, (uintptr_t)rootfs_path
+        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
+        (uintptr_t)rootfs_path, disk_limit
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

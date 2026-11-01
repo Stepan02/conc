@@ -408,6 +408,43 @@ int read_config(config_t *config, const char *bundle_path) {
         snprintf(config->custom_hostname, sizeof(config->custom_hostname), "%s", custom_hostname->valuestring);
     }
 
+    const cJSON *annotations = cJSON_GetObjectItemCaseSensitive(config_file, "annotations");
+    if (cJSON_IsObject(annotations)) {
+        const int count = cJSON_GetArraySize(annotations);
+
+        if (count > 0) {
+            /**
+            config->annotations = calloc(count + 1, sizeof(object_t)); // object + null termination
+            if (!config->annotations) {
+                perror("failed to allocate annotations");
+                cJSON_Delete(config_file);
+
+                return -1;
+            }
+            **/
+            const cJSON *item = NULL;
+            // int i = 0;
+            cJSON_ArrayForEach(item, annotations) {
+                if (cJSON_IsString(item) && item->valuestring && item->string) {
+                    if (strcmp(item->string, "runner.disk-limit") == 0) {
+                        const int limit = atoi(item->valuestring);
+
+                        if (limit > 0) {
+                            config->disk_limit = limit;
+                        }
+
+                        break; // no further annotations to be processed
+                    }
+
+                    // i++;
+                }
+            }
+
+            // config->annotations_count = i;
+            // config->annotations[config->annotations_count].key = NULL; // add null termination
+        }
+    }
+
     const cJSON *args = cJSON_GetObjectItem(process, "args");
     if (cJSON_IsArray(args)) {
         const int count = cJSON_GetArraySize(args);
@@ -523,5 +560,15 @@ void free_config(config_t *config) {
 
         free(config->masked_paths);
         config->masked_paths = NULL;
+    }
+
+    if (config->annotations != NULL) {
+        for (int i = 0; i < config->annotations_count; i++) {
+            free(config->annotations[i].key);
+            free(config->annotations[i].value);
+        }
+
+        free(config->annotations);
+        config->annotations = NULL;
     }
 }
