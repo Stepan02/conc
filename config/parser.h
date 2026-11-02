@@ -38,6 +38,9 @@ typedef struct {
     int disk_limit;
     object_t *annotations;
     int annotations_count;
+    char *seccomp_default_action;
+    object_t *seccomp_syscalls;
+    int seccomp_syscalls_count;
 } config_t;
 
 typedef struct {

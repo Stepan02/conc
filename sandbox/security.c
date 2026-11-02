@@ -10,6 +10,7 @@
 #include <sys/prctl.h>
 #include <sys/ioctl.h>
 #include <sys/sysinfo.h>
+#include "include/types.h"
 
 struct resources {
     uint64_t max;
@@ -89,55 +90,39 @@ static int memory_write(const pid_t pid, const unsigned long remote_address, con
     return 0;
 }
 
-int setup_syscall_blacklist(const int no_new_privileges) {
-    const scmp_filter_ctx ctx = seccomp_init(SCMP_ACT_ALLOW);
+static uint32_t get_action(const char *action_name) {
+    if (!action_name) return SCMP_ACT_ALLOW;
+    if (strcmp(action_name, "SCMP_ACT_ALLOW") == 0) return SCMP_ACT_ALLOW;
+    if (strcmp(action_name, "SCMP_ACT_ERRNO") == 0) return SCMP_ACT_ERRNO(EPERM);
+    if (strcmp(action_name, "SCMP_ACT_NOTIFY") == 0) return SCMP_ACT_NOTIFY;
+    if (strcmp(action_name, "SCMP_ACT_KILL") == 0) return SCMP_ACT_KILL;
+
+    return SCMP_ACT_ERRNO(EPERM); // default
+}
+
+int setup_syscall_filter(const char *default_action_name, const object_t *syscalls, const int syscalls_count, const int no_new_privileges) {
+    // set default action
+    const uint32_t default_action = get_action(default_action_name);
+    const scmp_filter_ctx ctx = seccomp_init(default_action);
     if (!ctx) {
         perror("seccomp_init");
         return -1;
     }
 
-    // blocked syscalls list
-    const int syscall_blacklist[] = {
-        SCMP_SYS(reboot),
-        SCMP_SYS(swapon),
-        SCMP_SYS(swapoff),
-        SCMP_SYS(kexec_load),
-        SCMP_SYS(kexec_file_load),
-        SCMP_SYS(init_module),
-        SCMP_SYS(finit_module),
-        SCMP_SYS(delete_module),
-        SCMP_SYS(ptrace),
-        SCMP_SYS(process_vm_readv),
-        SCMP_SYS(process_vm_writev),
-        SCMP_SYS(bpf),
-        SCMP_SYS(pivot_root),
-        SCMP_SYS(chroot),
-        SCMP_SYS(mount),
-        SCMP_SYS(umount2),
-        SCMP_SYS(ustat),
-        SCMP_SYS(sysfs),
-        SCMP_SYS(sysinfo),
-        SCMP_SYS(acct),
-        SCMP_SYS(syslog),
-        SCMP_SYS(add_key),
-        SCMP_SYS(request_key),
-        SCMP_SYS(keyctl),
-        SCMP_SYS(adjtimex),
-        SCMP_SYS(settimeofday),
-        SCMP_SYS(clock_settime),
-        SCMP_SYS(io_uring_setup),
-        SCMP_SYS(io_uring_enter),
-        SCMP_SYS(io_uring_register),
-        SCMP_SYS(unshare),
-        SCMP_SYS(setns)
-    };
-    const int num_blocked = sizeof(syscall_blacklist) / sizeof(syscall_blacklist[0]);
-    for (int i = 0; i < num_blocked; i++) {
-        // add seccomp rule
-        if (seccomp_rule_add(ctx, SCMP_ACT_NOTIFY, syscall_blacklist[i], 0) < 0) {
-            perror("seccomp_rule_add");
-            seccomp_release(ctx);
-            return -1;
+    // setup filter
+    for (int i = 0; i < syscalls_count; i++) {
+        const char *sys_name = syscalls[i].key;
+        const char *sys_action = syscalls[i].value;
+
+        const int syscall_nr = seccomp_syscall_resolve_name(sys_name);
+        if (syscall_nr >= 0) {
+            const uint32_t action = get_action(sys_action);
+
+            if (seccomp_rule_add(ctx, action, syscall_nr, 0) < 0) {
+                perror("seccomp_rule_add");
+                seccomp_release(ctx);
+                return -1;
+            }
         }
     }
 

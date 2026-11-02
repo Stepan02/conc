@@ -77,6 +77,9 @@ static int container_runtime(void *arg) {
     const int devices_count = (int)args[16];
     const char *rootfs_path = (const char *)args[17];
     const int disk_size = (int)args[18];
+    const char *seccomp_default_action = (const char *)args[19];
+    const object_t *seccomp_syscalls = (const object_t *)args[20];
+    const int seccomp_syscall_count = (int)args[21];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -342,7 +345,7 @@ static int container_runtime(void *arg) {
     }
 
     // init syscall blacklist
-    const int notify_fd = setup_syscall_blacklist(no_new_privileges);
+    const int notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_syscalls, seccomp_syscall_count, no_new_privileges);
     if (notify_fd < 0) {
         perror("syscall blacklist");
         _exit(1);
@@ -728,11 +731,15 @@ static int create_container(char *argv[], int argc) {
         snprintf(rootfs_path, sizeof(rootfs_path), "%s/%s", bundle_path_value, config.rootfs_path);
     }
 
+    const char *seccomp_default_action = config.seccomp_default_action;
+    const object_t *seccomp_syscalls = config.seccomp_syscalls;
+    const int seccomp_syscalls_count = config.seccomp_syscalls_count;
+
     // clone child
-    uintptr_t child_args[19] = {
+    uintptr_t child_args[22] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
         readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
-        (uintptr_t)rootfs_path, disk_limit
+        (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

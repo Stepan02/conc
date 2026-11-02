@@ -384,6 +384,43 @@ int read_config(config_t *config, const char *bundle_path) {
                 config->sysctl[config->sysctl_count].key = NULL; // add null termination
             }
         }
+
+        const cJSON *seccomp = cJSON_GetObjectItemCaseSensitive(linux_object, "seccomp");
+        if (cJSON_IsObject(seccomp)) {
+            const cJSON *default_action = cJSON_GetObjectItemCaseSensitive(seccomp, "defaultAction");
+            if (cJSON_IsString(default_action) && default_action->valuestring) {
+                config->seccomp_default_action = strdup(default_action->valuestring);
+            }
+
+            const cJSON *syscalls = cJSON_GetObjectItemCaseSensitive(seccomp, "syscalls");
+            if (cJSON_IsArray(syscalls)) {
+                const int count = cJSON_GetArraySize(syscalls);
+
+                if (count > 0) {
+                    config->seccomp_syscalls_count = count;
+                    config->seccomp_syscalls = calloc(count + 1, sizeof(object_t));
+
+                    int i = 0;
+                    cJSON *rule = NULL;
+                    cJSON_ArrayForEach(rule, syscalls) {
+                        const cJSON *action = cJSON_GetObjectItemCaseSensitive(rule, "action");
+                        const cJSON *names = cJSON_GetObjectItemCaseSensitive(rule, "names");
+
+                        if (cJSON_IsString(action) && action->valuestring && cJSON_IsArray(names)) {
+                            const cJSON *name = cJSON_GetArrayItem(names, 0);
+
+                            if (cJSON_IsString(name) && name->valuestring) {
+                                config->seccomp_syscalls[i].key = strdup(name->valuestring);
+                                config->seccomp_syscalls[i].value = strdup(action->valuestring);
+                                i++;
+                            }
+                        }
+                    }
+
+                    config->seccomp_syscalls_count = i;
+                }
+            }
+        }
     }
 
     snprintf(config->rootfs_path, sizeof(config->rootfs_path), "rootfs");
@@ -570,5 +607,15 @@ void free_config(config_t *config) {
 
         free(config->annotations);
         config->annotations = NULL;
+    }
+
+    if (config->seccomp_syscalls != NULL) {
+        for (int i = 0; i < config->seccomp_syscalls_count; i++) {
+            free(config->seccomp_syscalls[i].key);
+            free(config->seccomp_syscalls[i].value);
+        }
+
+        free(config->seccomp_syscalls);
+        config->seccomp_syscalls = NULL;
     }
 }
