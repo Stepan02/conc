@@ -80,6 +80,8 @@ static int container_runtime(void *arg) {
     const char *seccomp_default_action = (const char *)args[19];
     const object_t *seccomp_syscalls = (const object_t *)args[20];
     const int seccomp_syscall_count = (int)args[21];
+    char **seccomp_architectures = (char **)args[22];
+    const int seccomp_architectures_count = (int)args[23];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -345,7 +347,8 @@ static int container_runtime(void *arg) {
     }
 
     // init syscall blacklist
-    const int notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_syscalls, seccomp_syscall_count, no_new_privileges);
+    const int notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_syscalls, seccomp_syscall_count, no_new_privileges,
+        seccomp_architectures, seccomp_architectures_count);
     if (notify_fd < 0) {
         perror("syscall blacklist");
         _exit(1);
@@ -734,12 +737,15 @@ static int create_container(char *argv[], int argc) {
     const char *seccomp_default_action = config.seccomp_default_action;
     const object_t *seccomp_syscalls = config.seccomp_syscalls;
     const int seccomp_syscalls_count = config.seccomp_syscalls_count;
+    char **seccomp_architectures = config.seccomp_architectures;
+    const int seccomp_architectures_count = config.seccomp_architectures_count;
 
     // clone child
-    uintptr_t child_args[22] = {
+    uintptr_t child_args[24] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
         readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
-        (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count
+        (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count,
+        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

@@ -41,6 +41,8 @@ typedef struct {
     char *seccomp_default_action;
     object_t *seccomp_syscalls;
     int seccomp_syscalls_count;
+    char **seccomp_architectures;
+    int seccomp_architectures_count;
 } config_t;
 
 typedef struct {

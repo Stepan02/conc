@@ -100,13 +100,41 @@ static uint32_t get_action(const char *action_name) {
     return SCMP_ACT_ERRNO(EPERM); // default
 }
 
-int setup_syscall_filter(const char *default_action_name, const object_t *syscalls, const int syscalls_count, const int no_new_privileges) {
+static uint32_t get_architecture(const char *architecture_name) {
+    if (!architecture_name) return 0;
+    if (strcmp(architecture_name, "SCMP_ARCH_X86_64") == 0) return SCMP_ARCH_X86_64;
+    if (strcmp(architecture_name, "SCMP_ARCH_X86") == 0) return SCMP_ARCH_X86;
+    if (strcmp(architecture_name, "SCMP_ARCH_X32") == 0) return SCMP_ARCH_X32;
+    if (strcmp(architecture_name, "SCMP_ARCH_ARM") == 0) return SCMP_ARCH_ARM;
+    if (strcmp(architecture_name, "SCMP_ARCH_AARCH64") == 0) return SCMP_ARCH_AARCH64;
+
+    return 0;
+}
+
+int setup_syscall_filter(const char *default_action_name, const object_t *syscalls, const int syscalls_count, const int no_new_privileges, char **architectures, const int architectures_count) {
     // set default action
     const uint32_t default_action = get_action(default_action_name);
     const scmp_filter_ctx ctx = seccomp_init(default_action);
     if (!ctx) {
         perror("seccomp_init");
         return -1;
+    }
+
+    // set architectures
+    for (int i = 0; i < architectures_count; i++) {
+        const char *name = architectures[i];
+
+        const uint32_t architecture = get_architecture(name);
+        if (architecture != 0) {
+            const int rc = seccomp_arch_add(ctx, architecture);
+
+            // native architecture might be added already
+            if (rc < 0 && rc != -EEXIST) {
+                perror("seccomp_arch_add");
+                seccomp_release(ctx);
+                return -1;
+            }
+        }
     }
 
     // setup filter

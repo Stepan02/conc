@@ -392,6 +392,22 @@ int read_config(config_t *config, const char *bundle_path) {
                 config->seccomp_default_action = strdup(default_action->valuestring);
             }
 
+            const cJSON *architectures = cJSON_GetObjectItemCaseSensitive(seccomp, "architectures");
+            if (cJSON_IsArray(architectures)) {
+                const int count = cJSON_GetArraySize(architectures);
+                config->seccomp_architectures = malloc(count * sizeof(char *));
+
+                int i = 0;
+                const cJSON *architecture = NULL;
+                cJSON_ArrayForEach(architecture, architectures) {
+                    if (cJSON_IsString(architecture) && architecture->valuestring) {
+                        config->seccomp_architectures[i++] = strdup(architecture->valuestring);
+                    }
+                }
+
+                config->seccomp_architectures_count = count;
+            }
+
             const cJSON *syscalls = cJSON_GetObjectItemCaseSensitive(seccomp, "syscalls");
             if (cJSON_IsArray(syscalls)) {
                 const int count = cJSON_GetArraySize(syscalls);
@@ -617,5 +633,14 @@ void free_config(config_t *config) {
 
         free(config->seccomp_syscalls);
         config->seccomp_syscalls = NULL;
+    }
+
+    if (config->seccomp_architectures != NULL) {
+        for (int i = 0; i < config->seccomp_architectures_count; i++) {
+            free(config->seccomp_architectures[i]);
+        }
+
+        free(config->seccomp_architectures);
+        config->seccomp_architectures = NULL;
     }
 }
