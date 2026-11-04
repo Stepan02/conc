@@ -413,27 +413,42 @@ int read_config(config_t *config, const char *bundle_path) {
                 const int count = cJSON_GetArraySize(syscalls);
 
                 if (count > 0) {
-                    config->seccomp_syscalls_count = count;
-                    config->seccomp_syscalls = calloc(count + 1, sizeof(object_t));
+                    int total_fields = 0;
+                    const cJSON *rule = NULL;
 
-                    int i = 0;
-                    cJSON *rule = NULL;
+                    // count every field for memory allocation
                     cJSON_ArrayForEach(rule, syscalls) {
                         const cJSON *action = cJSON_GetObjectItemCaseSensitive(rule, "action");
                         const cJSON *names = cJSON_GetObjectItemCaseSensitive(rule, "names");
 
                         if (cJSON_IsString(action) && action->valuestring && cJSON_IsArray(names)) {
-                            const cJSON *name = cJSON_GetArrayItem(names, 0);
-
-                            if (cJSON_IsString(name) && name->valuestring) {
-                                config->seccomp_syscalls[i].key = strdup(name->valuestring);
-                                config->seccomp_syscalls[i].value = strdup(action->valuestring);
-                                i++;
-                            }
+                            total_fields += cJSON_GetArraySize(names);
                         }
                     }
 
-                    config->seccomp_syscalls_count = i;
+                    if (total_fields > 0) {
+                        config->seccomp_syscalls = calloc(total_fields + 1, sizeof(object_t));
+
+                        int i = 0;
+                        cJSON_ArrayForEach(rule, syscalls) {
+                            const cJSON *action = cJSON_GetObjectItemCaseSensitive(rule, "action");
+                            const cJSON *names = cJSON_GetObjectItemCaseSensitive(rule, "names");
+
+                            if (cJSON_IsString(action) && action->valuestring && cJSON_IsArray(names)) {
+                                const cJSON *name = NULL;
+
+                                cJSON_ArrayForEach(name, names) {
+                                    if (cJSON_IsString(name) && name->valuestring) {
+                                        config->seccomp_syscalls[i].key = strdup(name->valuestring);
+                                        config->seccomp_syscalls[i].value = strdup(action->valuestring);
+                                        i++;
+                                    }
+                                }
+                            }
+                        }
+
+                        config->seccomp_syscalls_count = i;
+                    }
                 }
             }
         }
