@@ -6,6 +6,7 @@
 #include <linux/limits.h>
 #include <stdint.h>
 #include <sched.h>
+#include <errno.h>
 #include "../libs/cJSON.h"
 
 int read_config(config_t *config, const char *bundle_path) {
@@ -390,6 +391,13 @@ int read_config(config_t *config, const char *bundle_path) {
             const cJSON *default_action = cJSON_GetObjectItemCaseSensitive(seccomp, "defaultAction");
             if (cJSON_IsString(default_action) && default_action->valuestring) {
                 config->seccomp_default_action = strdup(default_action->valuestring);
+            }
+
+            config->seccomp_default_errno = EPERM;
+
+            const cJSON *default_errno_return = cJSON_GetObjectItemCaseSensitive(seccomp, "defaultErrnoRet");
+            if (cJSON_IsNumber(default_errno_return)) {
+                config->seccomp_default_errno = default_errno_return->valueint;
             }
 
             const cJSON *architectures = cJSON_GetObjectItemCaseSensitive(seccomp, "architectures");

@@ -90,14 +90,20 @@ static int memory_write(const pid_t pid, const unsigned long remote_address, con
     return 0;
 }
 
-static uint32_t get_action(const char *action_name) {
+static uint32_t get_action(const char *action_name, const unsigned int return_errno) {
     if (!action_name) return SCMP_ACT_ALLOW;
+
+    unsigned int action_errno = EPERM; // default
+    if (return_errno) {
+        action_errno = return_errno;
+    }
+
     if (strcmp(action_name, "SCMP_ACT_ALLOW") == 0) return SCMP_ACT_ALLOW;
-    if (strcmp(action_name, "SCMP_ACT_ERRNO") == 0) return SCMP_ACT_ERRNO(EPERM);
     if (strcmp(action_name, "SCMP_ACT_NOTIFY") == 0) return SCMP_ACT_NOTIFY;
     if (strcmp(action_name, "SCMP_ACT_KILL") == 0) return SCMP_ACT_KILL;
+    if (strcmp(action_name, "SCMP_ACT_ERRNO") == 0) return SCMP_ACT_ERRNO(action_errno);
 
-    return SCMP_ACT_ERRNO(EPERM); // default
+    return -1;
 }
 
 static uint32_t get_architecture(const char *architecture_name) {
@@ -111,9 +117,14 @@ static uint32_t get_architecture(const char *architecture_name) {
     return 0;
 }
 
-int setup_syscall_filter(const char *default_action_name, const object_t *syscalls, const int syscalls_count, const int no_new_privileges, char **architectures, const int architectures_count) {
+int setup_syscall_filter(const char *default_action_name, const unsigned int default_errno_return, const object_t *syscalls, const int syscalls_count, const int no_new_privileges, char **architectures, const int architectures_count) {
     // set default action
-    const uint32_t default_action = get_action(default_action_name);
+    const uint32_t default_action = get_action(default_action_name, default_errno_return);
+    if (default_action == (uint32_t)-1) {
+        perror("seccomp default_action");
+        return -1;
+    }
+
     const scmp_filter_ctx ctx = seccomp_init(default_action);
     if (!ctx) {
         perror("seccomp_init");
@@ -144,7 +155,11 @@ int setup_syscall_filter(const char *default_action_name, const object_t *syscal
 
         const int syscall_nr = seccomp_syscall_resolve_name(sys_name);
         if (syscall_nr >= 0) {
-            const uint32_t action = get_action(sys_action);
+            const uint32_t action = get_action(sys_action, default_errno_return);
+            if (action == (uint32_t)-1) {
+                perror("seccomp action");
+                return -1;
+            }
 
             if (seccomp_rule_add(ctx, action, syscall_nr, 0) < 0) {
                 perror("seccomp_rule_add");

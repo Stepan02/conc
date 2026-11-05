@@ -43,6 +43,7 @@ typedef struct {
     int seccomp_syscalls_count;
     char **seccomp_architectures;
     int seccomp_architectures_count;
+    unsigned int seccomp_default_errno;
 } config_t;
 
 typedef struct {
