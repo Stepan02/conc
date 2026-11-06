@@ -253,3 +253,47 @@ int setup_sysctl(const object_t *sysctl, const int sysctl_count) {
 
     return 0;
 }
+
+int set_state(const pid_t child_pid, const int freeze) {
+    sd_bus *bus = NULL;
+    sd_bus_error error = SD_BUS_ERROR_NULL;
+
+    // connect to dbus
+    int r;
+    if (getuid() == 0) {
+        // use system bus if running as root
+        r = sd_bus_default_system(&bus);
+    } else {
+        r = sd_bus_default_user(&bus);
+    }
+
+    if (r < 0) {
+        fprintf(stderr, "d-bus: %s\n", strerror(-r));
+        return r;
+    }
+
+    char scope_name[64];
+    snprintf(scope_name, sizeof(scope_name), "sandbox-%d.scope", child_pid);
+
+    const char *method = freeze ? "FreezeUnit" : "ThawUnit";
+
+    r = sd_bus_call_method(bus,
+        "org.freedesktop.systemd1",
+        "/org/freedesktop/systemd1",
+        "org.freedesktop.systemd1.Manager",
+        method,
+        &error,
+        NULL,
+        "s",
+        scope_name);
+
+    if (r < 0) {
+        fprintf(stderr, "%s failed: %s\n", method, error.message);
+    }
+
+    // cleanup
+    sd_bus_error_free(&error);
+    sd_bus_unref(bus);
+
+    return r;
+}

@@ -1232,6 +1232,38 @@ static state_t get_container_state() {
     return state;
 }
 
+static int set_container_state(const int state) {
+    // get container pid
+    char container_pid_path[512];
+    snprintf(container_pid_path, sizeof(container_pid_path), "/tmp/runner-%s/container.pid", container_name);
+
+    const int fd = open(container_pid_path, O_RDONLY);
+    if (fd < 0) {
+        perror("container is not running");
+        return 1;
+    }
+
+    char pid_buffer[32] = {0};
+    const ssize_t bytes = read(fd, pid_buffer, sizeof(pid_buffer) - 1);
+    close(fd);
+
+    if (bytes <= 0) {
+        fprintf(stderr, "read container pid\n");
+        return 1;
+    }
+
+    const pid_t pid = (pid_t) strtol(pid_buffer, NULL, 10);
+
+    // set the container state
+    // 0 = running state; 1 = paused state
+    if (set_state(pid, state) < 0) {
+        fprintf(stderr, "set container state\n");
+        return 1;
+    }
+
+    return 0;
+}
+
 int main(const int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "please specify a command\n");
@@ -1309,6 +1341,32 @@ int main(const int argc, char *argv[]) {
         printf("}\n");
 
         return 0;
+    }
+
+    // pause command
+    if (strcmp(argv[1], "pause") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
+
+        snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+
+        // 1 = paused state
+        return set_container_state(1);
+    }
+
+    // resume command
+    if (strcmp(argv[1], "resume") == 0) {
+        if (argc < 3) {
+            fprintf(stderr, "missing container name\n");
+            return 1;
+        }
+
+        snprintf(container_name, sizeof(container_name), "%s", argv[2]);
+
+        // 0 = running state
+        return set_container_state(0);
     }
 
     fprintf(stderr, "unknown command %s\n", argv[1]);
