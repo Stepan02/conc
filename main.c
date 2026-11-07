@@ -1176,8 +1176,15 @@ static state_t get_container_state() {
     char container_bundle_path[PATH_MAX];
     snprintf(container_bundle_path, sizeof(container_bundle_path), "%s/bundle-path", container_directory);
 
+    char container_paused_file_path[PATH_MAX];
+    snprintf(container_paused_file_path, sizeof(container_paused_file_path), "/tmp/runner-%s/paused", container_name);
+
     if (access(container_pid_path, F_OK) == 0) {
         snprintf(state.status, sizeof(state.status), "running");
+
+        if (access(container_paused_file_path, F_OK) == 0) {
+            snprintf(state.status, sizeof(state.status), "paused");
+        }
 
         // get container pid
         const int fd = open(container_pid_path, O_RDONLY);
@@ -1259,6 +1266,25 @@ static int set_container_state(const int state) {
     if (set_state(pid, state) < 0) {
         fprintf(stderr, "set container state\n");
         return 1;
+    }
+
+    char container_paused_file_path[PATH_MAX];
+    snprintf(container_paused_file_path, sizeof(container_paused_file_path), "/tmp/runner-%s/paused", container_name);
+
+    // create paused file if the container is paused
+    if (state == 1) {
+        const int paused_fd = open(container_paused_file_path, O_CREAT | O_WRONLY, 0644);
+        if (paused_fd >= 0) {
+            close(paused_fd);
+        }
+    }
+
+    // delete paused file if the container is resumed
+    if (state == 0) {
+        if (unlink(container_paused_file_path) < 0 && errno != ENOENT) {
+            perror("failed to remove paused file");
+            return -1;
+        }
     }
 
     return 0;
