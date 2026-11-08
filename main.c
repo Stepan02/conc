@@ -1,3 +1,4 @@
+#include <dirent.h>
 #include <elf.h>
 #include <sched.h>
 #include <sys/wait.h>
@@ -1290,6 +1291,38 @@ static int set_container_state(const int state) {
     return 0;
 }
 
+static void list_containers() {
+    DIR *tmp_directory = opendir("/tmp");
+    if (!tmp_directory) {
+        perror("failed to open tmp directory");
+        return;
+    }
+
+    printf("ID\t\tPID\tSTATUS\t\tBUNDLE\n");
+
+    struct dirent *entry;
+    while ((entry = readdir(tmp_directory)) != NULL) {
+        // get directories starting on "runner-"
+        if (entry->d_type == DT_DIR && strncmp(entry->d_name, "runner-", 7) == 0) {
+            const char *name = entry->d_name + 7;
+
+            snprintf(container_name, sizeof(container_name), "%s", name);
+
+            // get container state
+            state_t state = get_container_state();
+
+            // print container metadata
+            printf("%-10s\t%d\t%-10s\t%s\n",
+                state.container_id,
+                state.pid,
+                state.status,
+                state.bundle_path);
+        }
+    }
+
+    closedir(tmp_directory);
+}
+
 int main(const int argc, char *argv[]) {
     if (argc < 2) {
         fprintf(stderr, "please specify a command\n");
@@ -1393,6 +1426,12 @@ int main(const int argc, char *argv[]) {
 
         // 0 = running state
         return set_container_state(0);
+    }
+
+    // list command
+    if (strcmp(argv[1], "list") == 0) {
+        list_containers();
+        return  0;
     }
 
     fprintf(stderr, "unknown command %s\n", argv[1]);
