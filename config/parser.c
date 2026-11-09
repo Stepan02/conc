@@ -484,6 +484,28 @@ int read_config(config_t *config, const char *bundle_path) {
         snprintf(config->custom_hostname, sizeof(config->custom_hostname), "%s", custom_hostname->valuestring);
     }
 
+    const cJSON *mounts = cJSON_GetObjectItemCaseSensitive(config_file, "mounts");
+    if (cJSON_IsArray(mounts)) {
+        int count = cJSON_GetArraySize(mounts);
+
+        if (count > 0) {
+            config->mounts =calloc(count, sizeof(mount_t));
+            config->mounts_count = 0;
+
+            const cJSON *item = NULL;
+            cJSON_ArrayForEach(item, mounts) {
+                const cJSON *destination = cJSON_GetObjectItemCaseSensitive(item, "destination");
+                const cJSON *source = cJSON_GetObjectItemCaseSensitive(item, "source");
+
+                if (cJSON_IsString(destination) && cJSON_IsString(source)) {
+                    snprintf(config->mounts[config->mounts_count].destination, PATH_MAX, "%s", destination->valuestring);
+                    snprintf(config->mounts[config->mounts_count].source, PATH_MAX, "%s", source->valuestring);
+                    config->mounts_count++;
+                }
+            }
+        }
+    }
+
     const cJSON *annotations = cJSON_GetObjectItemCaseSensitive(config_file, "annotations");
     if (cJSON_IsObject(annotations)) {
         const int count = cJSON_GetArraySize(annotations);
@@ -636,6 +658,11 @@ void free_config(config_t *config) {
 
         free(config->masked_paths);
         config->masked_paths = NULL;
+    }
+
+    if (config->mounts != NULL) {
+        free(config->mounts);
+        config->mounts = NULL;
     }
 
     if (config->annotations != NULL) {

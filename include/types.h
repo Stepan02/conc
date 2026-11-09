@@ -1,5 +1,6 @@
 #ifndef SANDBOX_TYPES_H
 #define SANDBOX_TYPES_H
+#include <linux/limits.h>
 
 typedef struct {
     char *key;
@@ -14,5 +15,10 @@ typedef struct {
     int gid;
     int file_mode;
 } device_t;
+
+typedef struct {
+    char source[PATH_MAX];
+    char destination[PATH_MAX];
+} mount_t;
 
 #endif //SANDBOX_TYPES_H

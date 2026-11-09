@@ -84,6 +84,8 @@ static int container_runtime(void *arg) {
     const int seccomp_syscall_count = (int)args[22];
     char **seccomp_architectures = (char **)args[23];
     const int seccomp_architectures_count = (int)args[24];
+    const mount_t *mounts = (const mount_t *)args[25];
+    const int mounts_count = (int)args[26];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -205,6 +207,23 @@ static int container_runtime(void *arg) {
 
     if (mount("devpts", path, "devpts", 0, "newinstance,mode=0620,ptmxmode=0666") == -1) {
         perror("mount devpts");
+    }
+
+    // mount hosts mounts
+    if (mounts_count > 0) {
+        for (int i = 0; i < mounts_count; i++) {
+            char target_path[PATH_MAX * 2];
+            snprintf(target_path, sizeof(target_path), "%s%s", merged, mounts[i].destination);
+
+            // ensure the target path exits
+            mkdir(target_path, 0755);
+
+            // bind mount
+            if (mount(mounts[i].source, target_path, NULL, MS_BIND | MS_REC, NULL) < 0) {
+                fprintf(stderr, "failed to bind mount %s to %s", mounts[i].source, mounts[i].destination);
+                _exit(1);
+            }
+        }
     }
 
     /*
@@ -743,12 +762,15 @@ static int create_container(char *argv[], int argc) {
     char **seccomp_architectures = config.seccomp_architectures;
     const int seccomp_architectures_count = config.seccomp_architectures_count;
 
+    const mount_t *mounts = config.mounts;
+    const int mounts_count = config.mounts_count;
+
     // clone child
-    uintptr_t child_args[25] = {
+    uintptr_t child_args[27] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
         readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
         (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_default_errno, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count,
-        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count
+        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

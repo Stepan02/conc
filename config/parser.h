@@ -9,6 +9,8 @@ typedef struct {
     char rootfs_path[PATH_MAX];
     bool readonly_fs;
     char custom_hostname[256];
+    mount_t *mounts;
+    int mounts_count;
     int uid;
     int gid;
     int *additional_gids;
