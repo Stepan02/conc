@@ -19,6 +19,7 @@ typedef struct {
 typedef struct {
     char source[PATH_MAX];
     char destination[PATH_MAX];
+    int readonly;
 } mount_t;
 
 #endif //SANDBOX_TYPES_H

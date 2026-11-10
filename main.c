@@ -223,6 +223,14 @@ static int container_runtime(void *arg) {
                 fprintf(stderr, "failed to bind mount %s to %s", mounts[i].source, mounts[i].destination);
                 _exit(1);
             }
+
+            // read-only remount if set
+            if (mounts[i].readonly) {
+                if (mount(NULL, target_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC, NULL) < 0) {
+                    fprintf(stderr, "failed to read-only bind mount %s to %s\n", mounts[i].source, mounts[i].destination);
+                    _exit(1);
+                }
+            }
         }
     }
 
