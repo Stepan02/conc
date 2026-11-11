@@ -506,8 +506,24 @@ int read_config(config_t *config, const char *bundle_path) {
                         const cJSON *option = NULL;
                         cJSON_ArrayForEach(option, options) {
                             if (cJSON_IsString(option) && option->valuestring) {
-                                if (strcmp(option->valuestring, "ro") == 0) {
+                                if (strcmp(option->valuestring, "bind") == 0) {
+                                    config->mounts[config->mounts_count].bind = 1;
+                                }
+
+                                else if (strcmp(option->valuestring, "ro") == 0) {
                                     config->mounts[config->mounts_count].readonly = 1;
+                                }
+
+                                else if (strcmp(option->valuestring, "nosuid") == 0) {
+                                    config->mounts[config->mounts_count].nosuid = 1;
+                                }
+
+                                else if (strcmp(option->valuestring, "nodev") == 0) {
+                                    config->mounts[config->mounts_count].nodev = 1;
+                                }
+
+                                else if (strcmp(option->valuestring, "noexec") == 0) {
+                                    config->mounts[config->mounts_count].noexec = 1;
                                 }
                             }
                         }

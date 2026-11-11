@@ -224,10 +224,31 @@ static int container_runtime(void *arg) {
                 _exit(1);
             }
 
-            // read-only remount if set
-            if (mounts[i].readonly) {
-                if (mount(NULL, target_path, NULL, MS_BIND | MS_REMOUNT | MS_RDONLY | MS_REC, NULL) < 0) {
-                    fprintf(stderr, "failed to read-only bind mount %s to %s\n", mounts[i].source, mounts[i].destination);
+            // flags remount
+            if (mounts[i].readonly || mounts[i].nosuid || mounts[i].nodev || mounts[i].noexec) {
+                unsigned int remount_flags = MS_REMOUNT | MS_REC;
+                if (mounts[i].bind) {
+                    remount_flags |= MS_BIND;
+                }
+
+                if (mounts[i].readonly) {
+                    remount_flags |= MS_RDONLY;
+                }
+
+                if (mounts[i].nosuid) {
+                    remount_flags |= MS_NOSUID;
+                }
+
+                if (mounts[i].nodev) {
+                    remount_flags |= MS_NODEV;
+                }
+
+                if (mounts[i].noexec) {
+                    remount_flags |= MS_NOEXEC;
+                }
+
+                if (mount(NULL, target_path, NULL, remount_flags, NULL) < 0) {
+                    fprintf(stderr, "failed to mount %s to %s\n", mounts[i].source, mounts[i].destination);
                     _exit(1);
                 }
             }

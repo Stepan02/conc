@@ -20,6 +20,10 @@ typedef struct {
     char source[PATH_MAX];
     char destination[PATH_MAX];
     int readonly;
+    int bind;
+    int nosuid;
+    int nodev;
+    int noexec;
 } mount_t;
 
 #endif //SANDBOX_TYPES_H
