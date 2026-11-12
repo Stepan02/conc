@@ -19,6 +19,7 @@ typedef struct {
 typedef struct {
     char source[PATH_MAX];
     char destination[PATH_MAX];
+    char type[32];
     int readonly;
     int bind;
     int nosuid;

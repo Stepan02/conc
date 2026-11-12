@@ -496,11 +496,19 @@ int read_config(config_t *config, const char *bundle_path) {
             cJSON_ArrayForEach(item, mounts) {
                 const cJSON *destination = cJSON_GetObjectItemCaseSensitive(item, "destination");
                 const cJSON *source = cJSON_GetObjectItemCaseSensitive(item, "source");
+                const cJSON *type = cJSON_GetObjectItemCaseSensitive(item, "type");
                 const cJSON *options = cJSON_GetObjectItemCaseSensitive(item, "options");
 
                 if (cJSON_IsString(destination) && cJSON_IsString(source)) {
                     snprintf(config->mounts[config->mounts_count].destination, PATH_MAX, "%s", destination->valuestring);
                     snprintf(config->mounts[config->mounts_count].source, PATH_MAX, "%s", source->valuestring);
+
+                    // default type is bind
+                    snprintf(config->mounts[config->mounts_count].type, sizeof(config->mounts[config->mounts_count].type), "bind");
+
+                    if (cJSON_IsString(type)) {
+                        snprintf(config->mounts[config->mounts_count].type, sizeof(config->mounts[config->mounts_count].type), "%s", type->valuestring);
+                    }
 
                     if (cJSON_IsArray(options)) {
                         const cJSON *option = NULL;

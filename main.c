@@ -218,36 +218,45 @@ static int container_runtime(void *arg) {
             // ensure the target path exits
             mkdir(target_path, 0755);
 
-            // bind mount
-            if (mount(mounts[i].source, target_path, NULL, MS_BIND | MS_REC, NULL) < 0) {
-                fprintf(stderr, "failed to bind mount %s to %s", mounts[i].source, mounts[i].destination);
-                _exit(1);
-            }
-
-            // flags remount
+            // setup mount flags
+            unsigned int flags = 0;
             if (mounts[i].readonly || mounts[i].nosuid || mounts[i].nodev || mounts[i].noexec) {
-                unsigned int remount_flags = MS_REMOUNT | MS_REC;
                 if (mounts[i].bind) {
-                    remount_flags |= MS_BIND;
+                    flags |= MS_BIND;
                 }
 
                 if (mounts[i].readonly) {
-                    remount_flags |= MS_RDONLY;
+                    flags |= MS_RDONLY;
                 }
 
                 if (mounts[i].nosuid) {
-                    remount_flags |= MS_NOSUID;
+                    flags |= MS_NOSUID;
                 }
 
                 if (mounts[i].nodev) {
-                    remount_flags |= MS_NODEV;
+                    flags |= MS_NODEV;
                 }
 
                 if (mounts[i].noexec) {
-                    remount_flags |= MS_NOEXEC;
+                    flags |= MS_NOEXEC;
+                }
+            }
+
+            // explicit type bind or bind flag mount
+            if (strcmp(mounts[i].type, "bind") == 0 || (mounts[i].bind && strcmp(mounts[i].type, "tmpfs") != 0) != 0) {
+                // bind mount
+                if (mount(mounts[i].source, target_path, NULL, MS_BIND | MS_REC, NULL) < 0) {
+                    fprintf(stderr, "failed to bind mount %s to %s\n", mounts[i].source, mounts[i].destination);
+                    _exit(1);
                 }
 
-                if (mount(NULL, target_path, NULL, remount_flags, NULL) < 0) {
+                if (mount(NULL, target_path, NULL, MS_REMOUNT | MS_BIND | MS_REC | flags, NULL) < 0) {
+                    fprintf(stderr, "failed to bind remount %s to %s\n", mounts[i].source, mounts[i].destination);
+                    _exit(1);
+                }
+            } else {
+                // vfs mount
+                if (mount(mounts[i].source, target_path, mounts[i].type, flags, NULL) < 0) {
                     fprintf(stderr, "failed to mount %s to %s\n", mounts[i].source, mounts[i].destination);
                     _exit(1);
                 }
