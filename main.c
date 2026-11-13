@@ -831,7 +831,7 @@ static int create_container(char *argv[], int argc) {
 
     // map namespace
     if (config.namespaces & CLONE_NEWUSER) {
-        if (map_user(child_pid) != 0) {
+        if (map_user(child_pid, config.uid_mappings, config.uid_mappings_count, config.gid_mappings, config.gid_mappings_count) != 0) {
             perror("map_user");
             close(sync_sockets[0]);
             exit(1);

@@ -15,6 +15,10 @@ typedef struct {
     int gid;
     int *additional_gids;
     int additional_gids_count;
+    id_mapping_t *uid_mappings;
+    int uid_mappings_count;
+    id_mapping_t *gid_mappings;
+    int gid_mappings_count;
     int ram_limit;
     int cpu_limit;
     char **env_variables;

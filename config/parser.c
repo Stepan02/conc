@@ -460,6 +460,70 @@ int read_config(config_t *config, const char *bundle_path) {
                 }
             }
         }
+
+        const cJSON *uid_mappings = cJSON_GetObjectItemCaseSensitive(linux_object, "uidMappings");
+        if (cJSON_IsArray(uid_mappings)) {
+            const int count = cJSON_GetArraySize(uid_mappings);
+
+            if (count > 0) {
+                config->uid_mappings = calloc(count, sizeof(id_mapping_t));
+                config->uid_mappings_count = count;
+
+                int i = 0;
+                const cJSON *mapping = NULL;
+                cJSON_ArrayForEach(mapping, uid_mappings) {
+                    const cJSON *container_id = cJSON_GetObjectItemCaseSensitive(mapping, "containerID");
+                    const cJSON *host_id = cJSON_GetObjectItemCaseSensitive(mapping, "hostID");
+                    const cJSON *size = cJSON_GetObjectItemCaseSensitive(mapping, "size");
+
+                    if (cJSON_IsNumber(container_id)) {
+                        config->uid_mappings[i].container_id = container_id->valueint;
+                    }
+
+                    if (cJSON_IsNumber(host_id)) {
+                        config->uid_mappings[i].host_id = host_id->valueint;
+                    }
+
+                    if (cJSON_IsNumber(size)) {
+                        config->uid_mappings[i].size = size->valueint;
+                    }
+
+                    i++;
+                }
+            }
+        }
+
+        const cJSON *gid_mappings = cJSON_GetObjectItemCaseSensitive(linux_object, "gidMappings");
+        if (cJSON_IsArray(gid_mappings)) {
+            const int count = cJSON_GetArraySize(gid_mappings);
+
+            if (count > 0) {
+                config->gid_mappings = calloc(count, sizeof(id_mapping_t));
+                config->gid_mappings_count = count;
+
+                int i = 0;
+                const cJSON *mapping = NULL;
+                cJSON_ArrayForEach(mapping, gid_mappings) {
+                    const cJSON *container_id = cJSON_GetObjectItemCaseSensitive(mapping, "containerID");
+                    const cJSON *host_id = cJSON_GetObjectItemCaseSensitive(mapping, "hostID");
+                    const cJSON *size = cJSON_GetObjectItemCaseSensitive(mapping, "size");
+
+                    if (cJSON_IsNumber(container_id)) {
+                        config->gid_mappings[i].container_id = container_id->valueint;
+                    }
+
+                    if (cJSON_IsNumber(host_id)) {
+                        config->gid_mappings[i].host_id = host_id->valueint;
+                    }
+
+                    if (cJSON_IsNumber(size)) {
+                        config->gid_mappings[i].size = size->valueint;
+                    }
+
+                    i++;
+                }
+            }
+        }
     }
 
     snprintf(config->rootfs_path, sizeof(config->rootfs_path), "rootfs");

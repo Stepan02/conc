@@ -4,8 +4,9 @@
 #include <unistd.h>
 #include <stdio.h>
 #include <sys/wait.h>
+#include "include/types.h"
 
-int map_user(const pid_t child_pid) {
+int map_user(const pid_t child_pid, const id_mapping_t *uid_mappings, const int uid_mappings_count, const id_mapping_t *gid_mappings, const int gid_mappings_count) {
     // use uid_map and gid_map if running as root
     if (geteuid() == 0) {
         char path[64];
@@ -18,9 +19,21 @@ int map_user(const pid_t child_pid) {
             return -1;
         }
 
-        char uid_buffer[128];
-        int len = snprintf(uid_buffer, sizeof(uid_buffer), "0 0 1\n1 100000 65536\n");
-        if (write(fd, uid_buffer, len) < 0) {
+        char uid_buffer[4096] = {0};
+        int uid_offset = 0;
+        for (int i = 0; i < uid_mappings_count; i++) {
+            const int written = snprintf(uid_buffer + uid_offset, sizeof(uid_buffer) - uid_offset,
+                "%u %u %u\n",
+                uid_mappings[i].container_id,
+                uid_mappings[i].host_id,
+                uid_mappings[i].size);
+
+            if (written > 0) {
+                uid_offset += written;
+            }
+        }
+
+        if (write(fd, uid_buffer, uid_offset) < 0) {
             perror("write uid_map");
             close(fd);
             return -1;
@@ -36,9 +49,21 @@ int map_user(const pid_t child_pid) {
             return -1;
         }
 
-        char gid_buffer[128];
-        len = snprintf(gid_buffer, sizeof(gid_buffer), "0 0 1\n1 100000 65536\n");
-        if (write(fd, gid_buffer, len) < 0) {
+        char gid_buffer[4096] = {0};
+        int gid_offset = 0;
+        for (int i = 0; i < gid_mappings_count; i++) {
+            const int written = snprintf(gid_buffer + gid_offset, sizeof(gid_buffer) - gid_offset,
+                "%u %u %u\n",
+                gid_mappings[i].container_id,
+                gid_mappings[i].host_id,
+                gid_mappings[i].size);
+
+            if (written > 0) {
+                gid_offset += written;
+            }
+        }
+
+        if (write(fd, gid_buffer, gid_offset) < 0) {
             perror("write gid_map");
             close(fd);
             return -1;
