@@ -1,5 +1,4 @@
-#ifndef SANDBOX_PARSER_H
-#define SANDBOX_PARSER_H
+#pragma once
 #include <stdbool.h>
 #include <linux/limits.h>
 #include "include/types.h"
@@ -62,5 +61,3 @@ typedef struct {
 
 int read_config(config_t *config, const char *bundle_path);
 void free_config(config_t *config);
-
-#endif //SANDBOX_PARSER_H

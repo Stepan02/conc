@@ -1,5 +1,4 @@
-#ifndef SANDBOX_TYPES_H
-#define SANDBOX_TYPES_H
+#pragma once
 #include <linux/limits.h>
 #include <stdint.h>
 
@@ -33,5 +32,3 @@ typedef struct {
     uint32_t host_id;
     uint32_t size;
 } id_mapping_t;
-
-#endif //SANDBOX_TYPES_H

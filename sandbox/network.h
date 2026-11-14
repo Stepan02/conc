@@ -1,6 +1,3 @@
-#ifndef SANDBOX_NETWORK_H
-#define SANDBOX_NETWORK_H
+#pragma once
 
 int setup_loopback(void);
-
-#endif //SANDBOX_NETWORK_H
