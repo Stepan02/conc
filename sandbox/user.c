@@ -3,6 +3,7 @@
 #include <sys/types.h>
 #include <unistd.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <sys/wait.h>
 #include "include/types.h"
 
@@ -74,49 +75,107 @@ int map_user(const pid_t child_pid, const id_mapping_t *uid_mappings, const int 
         return 0;
     }
 
+    // convert child pid to string
     char pid_str[32];
-    char host_uid_str[32];
-    char host_gid_str[32];
-
-    // get uid and gid from host
-    const uid_t host_uid = getuid();
-    const gid_t host_gid = getgid();
-
-    // convert child pid, host uid and host gid to string
     snprintf(pid_str, sizeof(pid_str), "%d", child_pid);
-    snprintf(host_uid_str, sizeof(host_uid_str), "%d", host_uid);
-    snprintf(host_gid_str, sizeof(host_gid_str), "%d", host_gid);
+
+    // map container uid to host uid
+    int total_args = 2 + (uid_mappings_count * 3) + 1; // get total args for newuidmap call - 3 strings per mapping and null termination
+    char **uidmap_args = malloc(total_args * sizeof(char *));
+    if (!uidmap_args) {
+        perror("malloc newuidmap args");
+        return -1;
+    }
+
+    uidmap_args[0] = "newuidmap";
+    uidmap_args[1] = pid_str;
+
+    // assign mappings
+    int args_idx = 2;
+    for (int i = 0; i < uid_mappings_count; i++) {
+        char *c_id = malloc(32);
+        char *h_id = malloc(32);
+        char *sz = malloc(32);
+
+        snprintf(c_id, 32, "%u", uid_mappings[i].container_id);
+        snprintf(h_id, 32, "%u", uid_mappings[i].host_id);
+        snprintf(sz, 32, "%u", uid_mappings[i].size);
+
+        uidmap_args[args_idx++] = c_id;
+        uidmap_args[args_idx++] = h_id;
+        uidmap_args[args_idx++] = sz;
+    }
+
+    uidmap_args[args_idx++] = NULL; // add null termination
 
     // map container uid to host uid
     pid_t pid = fork();
     if (pid == 0) {
-        execlp("newuidmap", "newuidmap", pid_str,
-            "0", host_uid_str, "1", // root
-            "1", "100000", "65536", // other users
-            NULL);
-        perror("execlp newuidmap");
+        execvp("newuidmap", uidmap_args);
+        perror("execvp newuidmap");
         _exit(1);
     }
 
-    int status;
-    waitpid(pid, &status, 0);
-    if (status != 0) {
+    int uid_map_status;
+    waitpid(pid, &uid_map_status, 0);
+
+    // args cleanup
+    for (int i = 2; i < args_idx; i++) {
+        free(uidmap_args[i]);
+    }
+    free(uidmap_args);
+
+    if (uid_map_status != 0) {
         return -1;
     }
 
     // map container gid to host gid
+    total_args = 2 + (gid_mappings_count * 3) + 1; // get total args for newgidmap call - 3 strings per mapping and null termination
+    char **gidmap_args = malloc(total_args * sizeof(char *));
+    if (!gidmap_args) {
+        perror("malloc newgidmap args");
+        return -1;
+    }
+
+    gidmap_args[0] = "newgidmap";
+    gidmap_args[1] = pid_str;
+
+    // assign mappings
+    args_idx = 2;
+    for (int i = 0; i < gid_mappings_count; i++) {
+        char *c_id = malloc(32);
+        char *h_id = malloc(32);
+        char *sz = malloc(32);
+
+        snprintf(c_id, 32, "%u", gid_mappings[i].container_id);
+        snprintf(h_id, 32, "%u", gid_mappings[i].host_id);
+        snprintf(sz, 32, "%u", gid_mappings[i].size);
+
+        gidmap_args[args_idx++] = c_id;
+        gidmap_args[args_idx++] = h_id;
+        gidmap_args[args_idx++] = sz;
+    }
+
+    gidmap_args[args_idx++] = NULL; // add null termination
+
+    // map container gid to host gid
     pid = fork();
     if (pid == 0) {
-        execlp("newgidmap", "newgidmap", pid_str,
-            "0", host_gid_str, "1", // root
-            "1", "100000", "65536",  // other users
-            NULL);
-        perror("execlp newgidmap");
+        execvp("newgidmap", gidmap_args);
+        perror("execvp newgidmap");
         _exit(1);
     }
 
-    waitpid(pid, &status, 0);
-    if (status != 0) {
+    int gid_map_status;
+    waitpid(pid, &gid_map_status, 0);
+
+    // args cleanup
+    for (int i = 2; i < args_idx; i++) {
+        free(gidmap_args[i]);
+    }
+    free(gidmap_args);
+
+    if (gid_map_status != 0) {
         return -1;
     }
 
