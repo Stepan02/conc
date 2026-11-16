@@ -32,3 +32,14 @@ typedef struct {
     uint32_t host_id;
     uint32_t size;
 } id_mapping_t;
+
+typedef struct {
+    char *path;
+    char **args;
+    int args_count;
+} hook_t;
+
+typedef struct {
+    hook_t *create_runtime;
+    int create_runtime_count;
+} hooks_config_t;

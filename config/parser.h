@@ -49,6 +49,7 @@ typedef struct {
     char **seccomp_architectures;
     int seccomp_architectures_count;
     unsigned int seccomp_default_errno;
+    hooks_config_t hooks;
 } config_t;
 
 typedef struct {

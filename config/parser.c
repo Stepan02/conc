@@ -670,6 +670,52 @@ int read_config(config_t *config, const char *bundle_path) {
         }
     }
 
+    const cJSON *hooks = cJSON_GetObjectItem(config_file, "hooks");
+    if (cJSON_IsObject(hooks)) {
+        const cJSON *create_runtime = cJSON_GetObjectItem(hooks, "createRuntime");
+        if (cJSON_IsArray(create_runtime)) {
+            int create_runtime_count = cJSON_GetArraySize(create_runtime);
+            config->hooks.create_runtime_count = create_runtime_count;
+            config->hooks.create_runtime = malloc(create_runtime_count * sizeof(hook_t)); // createruntime hooks + null termination
+
+            int i = 0;
+            const cJSON *item = NULL;
+            cJSON_ArrayForEach(item, create_runtime) {
+                if (cJSON_IsObject(item)) {
+                    const cJSON *path = cJSON_GetObjectItem(item, "path");
+                    const cJSON *hook_args = cJSON_GetObjectItem(item, "args");
+
+                    config->hooks.create_runtime[i].path = NULL;
+
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        config->hooks.create_runtime[i].path = strdup(path->valuestring);
+                    }
+
+                    config->hooks.create_runtime[i].args = NULL;
+                    config->hooks.create_runtime[i].args_count = 0;
+
+                    if (cJSON_IsArray(hook_args)) {
+                        int arg_count = cJSON_GetArraySize(hook_args);
+                        config->hooks.create_runtime[i].args_count = arg_count;
+                        config->hooks.create_runtime[i].args = malloc((arg_count + 1) * sizeof(char *)); // args + null termination
+
+                        const cJSON *arg = NULL;
+                        int arg_i = 0;
+                        cJSON_ArrayForEach(arg, hook_args) {
+                            if (cJSON_IsString(arg) && arg->valuestring) {
+                                config->hooks.create_runtime[i].args[arg_i++] = strdup(arg->valuestring);
+                            }
+                        }
+
+                        config->hooks.create_runtime[i].args[arg_i] = NULL; // add null termination
+                    }
+
+                    i++;
+                }
+            }
+        }
+    }
+
     // empty command fallback
     if (config->command == NULL || config->command_args_count == 0) {
         if (config->command != NULL) {
@@ -793,5 +839,23 @@ void free_config(config_t *config) {
 
         free(config->seccomp_architectures);
         config->seccomp_architectures = NULL;
+    }
+
+    if (config->hooks.create_runtime != NULL) {
+        for (int i = 0; i < config->hooks.create_runtime_count; i++) {
+            free(config->hooks.create_runtime[i].path);
+
+            if (config->hooks.create_runtime[i].args != NULL) {
+                for (int j = 0; j < config->hooks.create_runtime[i].args_count; j++) {
+                    free(config->hooks.create_runtime[i].args[j]);
+                }
+
+                free(config->hooks.create_runtime[i].args);
+            }
+        }
+
+        free(config->hooks.create_runtime);
+        config->hooks.create_runtime = NULL;
+        config->hooks.create_runtime_count = 0;
     }
 }

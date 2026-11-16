@@ -24,6 +24,7 @@
 #include "sandbox/network.h"
 #include "sandbox/user.h"
 #include "sandbox/ipc.h"
+#include "sandbox/hook.h"
 
 // global container name variable
 static char container_name[64];
@@ -86,6 +87,7 @@ static int container_runtime(void *arg) {
     const int seccomp_architectures_count = (int)args[24];
     const mount_t *mounts = (const mount_t *)args[25];
     const int mounts_count = (int)args[26];
+    const hooks_config_t *hooks = (const hooks_config_t *)args[27];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -260,6 +262,15 @@ static int container_runtime(void *arg) {
                     fprintf(stderr, "failed to mount %s to %s\n", mounts[i].source, mounts[i].destination);
                     _exit(1);
                 }
+            }
+        }
+    }
+
+    // run createruntime hooks
+    if (hooks && hooks->create_runtime_count > 0) {
+        for (int i = 0; i < hooks->create_runtime_count; i++) {
+            if (run_hook(&hooks->create_runtime[i]) != 0) {
+                _exit(1);
             }
         }
     }
@@ -803,12 +814,14 @@ static int create_container(char *argv[], int argc) {
     const mount_t *mounts = config.mounts;
     const int mounts_count = config.mounts_count;
 
+    const hooks_config_t *hooks = &config.hooks;
+
     // clone child
-    uintptr_t child_args[27] = {
+    uintptr_t child_args[28] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
         readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
         (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_default_errno, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count,
-        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count
+        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count, (uintptr_t)hooks
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 

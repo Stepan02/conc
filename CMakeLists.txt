@@ -17,12 +17,14 @@ add_executable(runner main.c
         sandbox/network.c
         sandbox/user.h
         sandbox/user.c
-        sandbox/ipc.c
         sandbox/ipc.h
-        config/parser.c
+        sandbox/ipc.c
         config/parser.h
-        libs/cJSON.c
+        config/parser.c
         libs/cJSON.h
+        libs/cJSON.c
+        sandbox/hook.h
+        sandbox/hook.c
         include/types.h)
 
 find_package(PkgConfig REQUIRED)
