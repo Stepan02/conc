@@ -266,6 +266,15 @@ static int container_runtime(void *arg) {
         }
     }
 
+    // run createcontainer hooks
+    if (hooks && hooks->create_container_count > 0) {
+        for (int i = 0; i < hooks->create_container_count; i++) {
+            if (run_hook(&hooks->create_container[i]) != 0) {
+                _exit(1);
+            }
+        }
+    }
+
     /*
     // save old root
     char put_old[256];
