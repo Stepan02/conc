@@ -266,15 +266,6 @@ static int container_runtime(void *arg) {
         }
     }
 
-    // run createruntime hooks
-    if (hooks && hooks->create_runtime_count > 0) {
-        for (int i = 0; i < hooks->create_runtime_count; i++) {
-            if (run_hook(&hooks->create_runtime[i]) != 0) {
-                _exit(1);
-            }
-        }
-    }
-
     /*
     // save old root
     char put_old[256];
@@ -863,6 +854,19 @@ static int create_container(char *argv[], int argc) {
         close(start_fd);
 
         exit(1);
+    }
+
+    // run createcruntime hooks
+    if (hooks && hooks->create_runtime_count > 0) {
+        for (int i = 0; i < hooks->create_runtime_count; i++) {
+            if (run_hook(&hooks->create_runtime[i]) != 0) {
+                kill(child_pid, SIGKILL);
+                waitpid(child_pid, NULL, 0);
+                close(sync_sockets[0]);
+                close(start_fd);
+                _exit(1);
+            }
+        }
     }
 
     if (write(sync_sockets[0], "1", 1) != 1) {
