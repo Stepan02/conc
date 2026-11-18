@@ -757,6 +757,49 @@ int read_config(config_t *config, const char *bundle_path) {
                 }
             }
         }
+
+        const cJSON *start_container = cJSON_GetObjectItem(hooks, "startContainer");
+        if (cJSON_IsArray(start_container)) {
+            int start_container_count = cJSON_GetArraySize(start_container);
+            config->hooks.start_container_count = start_container_count;
+            config->hooks.start_container = malloc(start_container_count * sizeof(hook_t)); // startcontainer hooks + null termination
+
+            int i = 0;
+            const cJSON *item = NULL;
+            cJSON_ArrayForEach(item, start_container) {
+                if (cJSON_IsObject(item)) {
+                    const cJSON *path = cJSON_GetObjectItem(item, "path");
+                    const cJSON *hook_args = cJSON_GetObjectItem(item, "args");
+
+                    config->hooks.start_container[i].path = NULL;
+
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        config->hooks.start_container[i].path = strdup(path->valuestring);
+                    }
+
+                    config->hooks.start_container[i].args = NULL;
+                    config->hooks.start_container[i].args_count = 0;
+
+                    if (cJSON_IsArray(hook_args)) {
+                        int arg_count = cJSON_GetArraySize(hook_args);
+                        config->hooks.start_container[i].args_count = arg_count;
+                        config->hooks.start_container[i].args = malloc((arg_count + 1) * sizeof(char *)); // args + null termination
+
+                        const cJSON *arg = NULL;
+                        int arg_i = 0;
+                        cJSON_ArrayForEach(arg, hook_args) {
+                            if (cJSON_IsString(arg) && arg->valuestring) {
+                                config->hooks.start_container[i].args[arg_i++] = strdup(arg->valuestring);
+                            }
+                        }
+
+                        config->hooks.start_container[i].args[arg_i] = NULL; // add null termination
+                    }
+
+                    i++;
+                }
+            }
+        }
     }
 
     // empty command fallback
@@ -918,5 +961,23 @@ void free_config(config_t *config) {
         free(config->hooks.create_container);
         config->hooks.create_container = NULL;
         config->hooks.create_container_count = 0;
+    }
+
+    if (config->hooks.start_container != NULL) {
+        for (int i = 0; i < config->hooks.start_container_count; i++) {
+            free(config->hooks.start_container[i].path);
+
+            if (config->hooks.start_container[i].args != NULL) {
+                for (int j = 0; j < config->hooks.start_container[i].args_count; j++) {
+                    free(config->hooks.start_container[i].args[j]);
+                }
+
+                free(config->hooks.start_container[i].args);
+            }
+        }
+
+        free(config->hooks.start_container);
+        config->hooks.start_container = NULL;
+        config->hooks.start_container_count = 0;
     }
 }

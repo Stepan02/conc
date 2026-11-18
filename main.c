@@ -477,6 +477,15 @@ static int container_runtime(void *arg) {
         umask((mode_t)umask_value);
     }
 
+    // run startcontainer hooks
+    if (hooks && hooks->start_container_count > 0) {
+        for (int i = 0; i < hooks->start_container_count; i++) {
+            if (run_hook(&hooks->start_container[i]) != 0) {
+                _exit(1);
+            }
+        }
+    }
+
     // close descriptors
     syscall(SYS_close_range, 3, ~0U, 0);
     execvp(command[0], command);

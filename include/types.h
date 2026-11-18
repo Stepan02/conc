@@ -44,4 +44,6 @@ typedef struct {
     int create_runtime_count;
     hook_t *create_container;
     int create_container_count;
+    hook_t *start_container;
+    int start_container_count;
 } hooks_config_t;
