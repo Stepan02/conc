@@ -926,6 +926,15 @@ static int create_container(char *argv[], int argc) {
 
     close(notify_fd);
 
+    // run poststart hooks
+    if (config.hooks.post_start_count > 0) {
+        for (int i = 0; i < config.hooks.post_start_count; i++) {
+            if (run_hook(&config.hooks.post_start[i]) != 0) {
+                fprintf(stderr, "poststart hook failed: %d\n", i);
+            }
+        }
+    }
+
     // wait for container exit
     int status;
     waitpid(child_pid, &status, 0);
@@ -951,6 +960,15 @@ static int create_container(char *argv[], int argc) {
 
     // delete supervisor.pid file
     unlink(supervisor_pid_path);
+
+    // run poststop hooks
+    if (config.hooks.post_stop_count > 0) {
+        for (int i = 0; i < config.hooks.post_stop_count; i++) {
+            if (run_hook(&config.hooks.post_stop[i]) != 0) {
+                fprintf(stderr, "poststop hook failed: %d\n", i);
+            }
+        }
+    }
 
     // clear environment variables and config
     free(env_variables);

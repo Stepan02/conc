@@ -800,6 +800,92 @@ int read_config(config_t *config, const char *bundle_path) {
                 }
             }
         }
+
+        const cJSON *post_start = cJSON_GetObjectItem(hooks, "poststart");
+        if (cJSON_IsArray(post_start)) {
+            int post_start_count = cJSON_GetArraySize(post_start);
+            config->hooks.post_start_count = post_start_count;
+            config->hooks.post_start = malloc(post_start_count * sizeof(hook_t)); // poststart hooks + null termination
+
+            int i = 0;
+            const cJSON *item = NULL;
+            cJSON_ArrayForEach(item, post_start) {
+                if (cJSON_IsObject(item)) {
+                    const cJSON *path = cJSON_GetObjectItem(item, "path");
+                    const cJSON *hook_args = cJSON_GetObjectItem(item, "args");
+
+                    config->hooks.post_start[i].path = NULL;
+
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        config->hooks.post_start[i].path = strdup(path->valuestring);
+                    }
+
+                    config->hooks.post_start[i].args = NULL;
+                    config->hooks.post_start[i].args_count = 0;
+
+                    if (cJSON_IsArray(hook_args)) {
+                        int arg_count = cJSON_GetArraySize(hook_args);
+                        config->hooks.post_start[i].args_count = arg_count;
+                        config->hooks.post_start[i].args = malloc((arg_count + 1) * sizeof(char *)); // args + null termination
+
+                        const cJSON *arg = NULL;
+                        int arg_i = 0;
+                        cJSON_ArrayForEach(arg, hook_args) {
+                            if (cJSON_IsString(arg) && arg->valuestring) {
+                                config->hooks.post_start[i].args[arg_i++] = strdup(arg->valuestring);
+                            }
+                        }
+
+                        config->hooks.post_start[i].args[arg_i] = NULL; // add null termination
+                    }
+
+                    i++;
+                }
+            }
+        }
+
+        const cJSON *post_stop = cJSON_GetObjectItem(hooks, "poststop");
+        if (cJSON_IsArray(post_stop)) {
+            int post_stop_count = cJSON_GetArraySize(post_stop);
+            config->hooks.post_stop_count = post_stop_count;
+            config->hooks.post_stop = malloc(post_stop_count * sizeof(hook_t)); // poststop hooks + null termination
+
+            int i = 0;
+            const cJSON *item = NULL;
+            cJSON_ArrayForEach(item, post_stop) {
+                if (cJSON_IsObject(item)) {
+                    const cJSON *path = cJSON_GetObjectItem(item, "path");
+                    const cJSON *hook_args = cJSON_GetObjectItem(item, "args");
+
+                    config->hooks.post_stop[i].path = NULL;
+
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        config->hooks.post_stop[i].path = strdup(path->valuestring);
+                    }
+
+                    config->hooks.post_stop[i].args = NULL;
+                    config->hooks.post_stop[i].args_count = 0;
+
+                    if (cJSON_IsArray(hook_args)) {
+                        int arg_count = cJSON_GetArraySize(hook_args);
+                        config->hooks.post_stop[i].args_count = arg_count;
+                        config->hooks.post_stop[i].args = malloc((arg_count + 1) * sizeof(char *)); // args + null termination
+
+                        const cJSON *arg = NULL;
+                        int arg_i = 0;
+                        cJSON_ArrayForEach(arg, hook_args) {
+                            if (cJSON_IsString(arg) && arg->valuestring) {
+                                config->hooks.post_stop[i].args[arg_i++] = strdup(arg->valuestring);
+                            }
+                        }
+
+                        config->hooks.post_stop[i].args[arg_i] = NULL; // add null termination
+                    }
+
+                    i++;
+                }
+            }
+        }
     }
 
     // empty command fallback
@@ -875,6 +961,18 @@ void free_config(config_t *config) {
         config->additional_gids = NULL;
     }
 
+    if (config->uid_mappings != NULL) {
+        free(config->uid_mappings);
+        config->uid_mappings = NULL;
+        config->uid_mappings_count = 0;
+    }
+
+    if (config->gid_mappings != NULL) {
+        free(config->gid_mappings);
+        config->gid_mappings = NULL;
+        config->gid_mappings_count = 0;
+    }
+
     if (config->readonly_paths != NULL) {
         for (int i = 0; i < config->readonly_paths_count; i++) {
             free(config->readonly_paths[i]);
@@ -925,6 +1023,11 @@ void free_config(config_t *config) {
 
         free(config->seccomp_architectures);
         config->seccomp_architectures = NULL;
+    }
+
+    if (config->seccomp_default_action != NULL) {
+        free(config->seccomp_default_action);
+        config->seccomp_default_action = NULL;
     }
 
     if (config->hooks.create_runtime != NULL) {
@@ -979,5 +1082,41 @@ void free_config(config_t *config) {
         free(config->hooks.start_container);
         config->hooks.start_container = NULL;
         config->hooks.start_container_count = 0;
+    }
+
+    if (config->hooks.post_start != NULL) {
+        for (int i = 0; i < config->hooks.post_start_count; i++) {
+            free(config->hooks.post_start[i].path);
+
+            if (config->hooks.post_start[i].args != NULL) {
+                for (int j = 0; j < config->hooks.post_start[i].args_count; j++) {
+                    free(config->hooks.post_start[i].args[j]);
+                }
+
+                free(config->hooks.post_start[i].args);
+            }
+        }
+
+        free(config->hooks.post_start);
+        config->hooks.post_start = NULL;
+        config->hooks.post_start_count = 0;
+    }
+
+    if (config->hooks.post_stop != NULL) {
+        for (int i = 0; i < config->hooks.post_stop_count; i++) {
+            free(config->hooks.post_stop[i].path);
+
+            if (config->hooks.post_stop[i].args != NULL) {
+                for (int j = 0; j < config->hooks.post_stop[i].args_count; j++) {
+                    free(config->hooks.post_stop[i].args[j]);
+                }
+
+                free(config->hooks.post_stop[i].args);
+            }
+        }
+
+        free(config->hooks.post_stop);
+        config->hooks.post_stop = NULL;
+        config->hooks.post_stop_count = 0;
     }
 }

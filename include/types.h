@@ -46,4 +46,8 @@ typedef struct {
     int create_container_count;
     hook_t *start_container;
     int start_container_count;
+    hook_t *post_start;
+    int post_start_count;
+    hook_t *post_stop;
+    int post_stop_count;
 } hooks_config_t;
