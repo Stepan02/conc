@@ -901,6 +901,8 @@ static int create_container(char *argv[], int argc) {
 
         int status;
         waitpid(child_pid, &status, 0);
+        unlink(container_pid_path);
+        unlink(supervisor_pid_path);
         close(start_fd);
 
         exit(1);
