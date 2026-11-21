@@ -416,20 +416,30 @@ static int container_runtime(void *arg) {
         putenv(env_variables[i]);
     }
 
-    // init syscall blacklist
-    const int notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_default_errno, seccomp_syscalls, seccomp_syscall_count,
-        no_new_privileges, seccomp_architectures, seccomp_architectures_count);
-    if (notify_fd < 0) {
-        perror("syscall blacklist");
-        _exit(1);
+    int notify_fd = -1;
+
+    // init syscall blacklist if set
+    if (seccomp_default_action && seccomp_default_action[0] != '\0' && seccomp_syscall_count > 0) {
+        notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_default_errno, seccomp_syscalls, seccomp_syscall_count,
+            no_new_privileges, seccomp_architectures, seccomp_architectures_count);
+
+
+        // -1 = blacklist fail, -2 = no user notif set
+        if (notify_fd == -1) {
+            perror("syscall blacklist");
+            _exit(1);
+        }
     }
 
-    if (send_fd(sync_sock, notify_fd) < 0) {
-        perror("send_fd");
-        _exit(1);
+    if (notify_fd >= 0) {
+        if (send_fd(sync_sock, notify_fd) < 0) {
+            perror("send_fd");
+            _exit(1);
+        }
+
+        close(notify_fd);
     }
 
-    close(notify_fd);
     close(sync_sock);
 
     // no shell mode

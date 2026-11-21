@@ -118,11 +118,17 @@ static uint32_t get_architecture(const char *architecture_name) {
 }
 
 int setup_syscall_filter(const char *default_action_name, const unsigned int default_errno_return, const object_t *syscalls, const int syscalls_count, const int no_new_privileges, char **architectures, const int architectures_count) {
+    int user_notif = 0;
+
     // set default action
     const uint32_t default_action = get_action(default_action_name, default_errno_return);
     if (default_action == (uint32_t)-1) {
         perror("seccomp default_action");
         return -1;
+    }
+
+    if (default_action == SCMP_ACT_NOTIFY) {
+        user_notif = 1;
     }
 
     const scmp_filter_ctx ctx = seccomp_init(default_action);
@@ -158,13 +164,20 @@ int setup_syscall_filter(const char *default_action_name, const unsigned int def
             const uint32_t action = get_action(sys_action, default_errno_return);
             if (action == (uint32_t)-1) {
                 perror("seccomp action");
+                seccomp_release(ctx);
                 return -1;
             }
 
-            if (seccomp_rule_add(ctx, action, syscall_nr, 0) < 0) {
-                perror("seccomp_rule_add");
-                seccomp_release(ctx);
-                return -1;
+            if (action == SCMP_ACT_NOTIFY) {
+                user_notif = 1;
+            }
+
+            if (action != default_action) { // do not add rule that matches the default actions
+                if (seccomp_rule_add(ctx, action, syscall_nr, 0) < 0) {
+                    perror("seccomp_rule_add");
+                    seccomp_release(ctx);
+                    return -1;
+                }
             }
         }
     }
@@ -173,6 +186,7 @@ int setup_syscall_filter(const char *default_action_name, const unsigned int def
     if (no_new_privileges) {
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
             perror("pr_set_no_new_privs");
+            seccomp_release(ctx);
             return -1;
         }
     }
@@ -184,6 +198,12 @@ int setup_syscall_filter(const char *default_action_name, const unsigned int def
         return -1;
     }
 
+    // return -2 if setup was successful and no user notif was set so no listener is needed
+    if (!user_notif) {
+        seccomp_release(ctx);
+        return -2;
+    }
+
     // setup listener
     const int notify_fd = seccomp_notify_fd(ctx);
     if (notify_fd < 0) {
@@ -193,6 +213,8 @@ int setup_syscall_filter(const char *default_action_name, const unsigned int def
     }
 
     seccomp_release(ctx);
+
+    // return fd if user notif was set
     return notify_fd;
 }
 
