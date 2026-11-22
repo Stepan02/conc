@@ -423,7 +423,6 @@ static int container_runtime(void *arg) {
         notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_default_errno, seccomp_syscalls, seccomp_syscall_count,
             no_new_privileges, seccomp_architectures, seccomp_architectures_count);
 
-
         // -1 = blacklist fail, -2 = no user notif set
         if (notify_fd == -1) {
             perror("syscall blacklist");
@@ -431,7 +430,13 @@ static int container_runtime(void *arg) {
         }
     }
 
-    if (notify_fd >= 0) {
+    const uint8_t user_notif_enabled = (notify_fd >= 0) ? 1 : 0;
+    if (write(sync_sock, &user_notif_enabled, sizeof(user_notif_enabled)) != sizeof(user_notif_enabled)) {
+        perror("write user_notif_enabled");
+        _exit(1);
+    }
+
+    if (user_notif_enabled) {
         if (send_fd(sync_sock, notify_fd) < 0) {
             perror("send_fd");
             _exit(1);
@@ -902,21 +907,40 @@ static int create_container(char *argv[], int argc) {
         exit(1);
     }
 
-    // listen to child notifications for syscalls
-    const int notify_fd = recv_fd(sync_sockets[0]);
-    close(sync_sockets[0]);
+    // listen to child notifications for syscalls if user notif is enabled
+    uint8_t user_notif_enabled = 0;
+    int notify_fd = -1;
 
-    if (notify_fd < 0) {
-        fprintf(stderr, "receive notify_fd\n");
+    if (read(sync_sockets[0], &user_notif_enabled, sizeof(user_notif_enabled)) != sizeof(user_notif_enabled)) {
+        perror("read user_notif_enabled");
 
         int status;
         waitpid(child_pid, &status, 0);
         unlink(container_pid_path);
         unlink(supervisor_pid_path);
         close(start_fd);
+        close(sync_sockets[0]);
 
         exit(1);
     }
+
+    if (user_notif_enabled) {
+        notify_fd = recv_fd(sync_sockets[0]);
+        if (notify_fd < 0) {
+            fprintf(stderr, "receive notify_fd\n");
+
+            int status;
+            waitpid(child_pid, &status, 0);
+            unlink(container_pid_path);
+            unlink(supervisor_pid_path);
+            close(start_fd);
+            close(sync_sockets[0]);
+
+            exit(1);
+        }
+    }
+
+    close(sync_sockets[0]);
 
     if (slave_fd != -1) {
         close(slave_fd);
@@ -928,15 +952,24 @@ static int create_container(char *argv[], int argc) {
             perror("send master_fd");
         }
     }
-    if (send_fd(start_fd, notify_fd) < 0) {
-        perror("send notify_fd");
+
+    if (write(start_fd, &user_notif_enabled, sizeof(user_notif_enabled)) != sizeof(user_notif_enabled)) {
+        perror("write user_notif_enabled");
+    }
+
+    if (user_notif_enabled) {
+        if (send_fd(start_fd, notify_fd) < 0) {
+            perror("send notify_fd");
+        }
     }
 
     if (master_fd != -1) {
         close(master_fd);
     }
 
-    close(notify_fd);
+    if (notify_fd >= 0) {
+        close(notify_fd);
+    }
 
     // run poststart hooks
     if (config.hooks.post_start_count > 0) {
@@ -1071,9 +1104,21 @@ static int start_container() {
     if (shell_mode) {
         master_fd = recv_fd(socket_fd);
     }
-    const int notify_fd = recv_fd(socket_fd);
 
-    if ((shell_mode && master_fd < 0) || notify_fd < 0) {
+    uint8_t user_notif_enabled = 0;
+    int notify_fd = -1;
+
+    if (read(socket_fd, &user_notif_enabled, sizeof(user_notif_enabled)) != sizeof(user_notif_enabled)) {
+        perror("failed to read user notif status");
+        return -1;
+    }
+
+    if (user_notif_enabled) {
+        notify_fd = recv_fd(socket_fd);
+    }
+
+
+    if ((shell_mode && master_fd < 0) || (user_notif_enabled && notify_fd < 0)) {
         perror("failed to receive fds from supervisor");
         return -1;
     }
@@ -1094,7 +1139,10 @@ static int start_container() {
 
     fd_set fds;
     char buf[256];
-    int max_fd = notify_fd;
+    int max_fd = -1;
+    if (notify_fd >= 0 && notify_fd > max_fd) {
+        max_fd = notify_fd;
+    }
     ssize_t n;
 
     if (shell_mode && master_fd != -1) {
@@ -1119,64 +1167,68 @@ static int start_container() {
         }
     }
 
-    while (1) {
-        FD_ZERO(&fds);
+    if (max_fd >= 0) {
+        while (1) {
+            FD_ZERO(&fds);
 
-        // monitor input and output in shell mode
-        if (shell_mode && master_fd != -1) {
-            FD_SET(STDIN_FILENO, &fds);
-            FD_SET(master_fd, &fds);
-        }
+            // monitor input and output in shell mode
+            if (shell_mode && master_fd != -1) {
+                FD_SET(STDIN_FILENO, &fds);
+                FD_SET(master_fd, &fds);
+            }
 
-        // monitor syscalls
-        FD_SET(notify_fd, &fds);
+            // monitor syscalls if user notif is enabled
+            if (notify_fd >= 0) {
+                FD_SET(notify_fd, &fds);
+            }
 
-        // pty loop
-        const int sel_ret = select(max_fd + 1, &fds, NULL, NULL, NULL);
-        if (sel_ret == -1) {
-            if (errno == EINTR) {
+            // pty loop
+            const int sel_ret = select(max_fd + 1, &fds, NULL, NULL, NULL);
+            if (sel_ret == -1) {
+                if (errno == EINTR) {
+                    continue;
+                }
+
+                perror("select");
+                break;
+            }
+
+            // continue to another iteration after timeout
+            if (sel_ret == 0) {
                 continue;
             }
 
-            perror("select");
-            break;
-        }
+            if (shell_mode) {
+                // direct input to child
+                if (master_fd != -1 && FD_ISSET(STDIN_FILENO, &fds)) {
+                    n = read(STDIN_FILENO, buf, sizeof(buf));
+                    if (n <= 0) {
+                        break;
+                    }
 
-        // continue to another iteration after timeout
-        if (sel_ret == 0) {
-            continue;
-        }
-
-        if (shell_mode) {
-            // direct input to child
-            if (master_fd != -1 && FD_ISSET(STDIN_FILENO, &fds)) {
-                n = read(STDIN_FILENO, buf, sizeof(buf));
-                if (n <= 0) {
-                    break;
+                    if (write(master_fd, buf, n) != n) {
+                        break;
+                    }
                 }
 
-                if (write(master_fd, buf, n) != n) {
-                    break;
-                }
-            }
+                // direct child output to pty
+                if (master_fd != -1 && FD_ISSET(master_fd, &fds)) {
+                    n = read(master_fd, buf, sizeof(buf));
+                    if (n <= 0) {
+                        break;
+                    }
 
-            // direct child output to pty
-            if (master_fd != -1 && FD_ISSET(master_fd, &fds)) {
-                n = read(master_fd, buf, sizeof(buf));
-                if (n <= 0) {
-                    break;
-                }
-
-                if (write(STDOUT_FILENO, buf, n) != n) {
-                    break;
+                    if (write(STDOUT_FILENO, buf, n) != n) {
+                        break;
+                    }
                 }
             }
-        }
 
-        // intercept syscall notifications
-        if (FD_ISSET(notify_fd, &fds)) {
-            if (syscall_handler(notify_fd) < 0) {
-                break;
+            // intercept syscall notifications
+            if (notify_fd >= 0 && FD_ISSET(notify_fd, &fds)) {
+                if (syscall_handler(notify_fd) < 0) {
+                    break;
+                }
             }
         }
     }
@@ -1192,7 +1244,10 @@ static int start_container() {
     char sync;
     while (read(socket_fd, &sync, 1) > 0) {}
     close(socket_fd);
-    close(notify_fd);
+
+    if (notify_fd >= 0) {
+        close(notify_fd);
+    }
 
     return 0;
 }
