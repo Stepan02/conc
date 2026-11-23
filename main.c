@@ -320,9 +320,30 @@ static int container_runtime(void *arg) {
     }
     */
 
+    // create symlinks for ptmx and fds
     unlink("/dev/ptmx");
-    if (symlink("/dev/pts/ptmx", "/dev/ptmx") == -1) {
+    if (symlink("pts/ptmx", "/dev/ptmx") == -1) {
         perror("symlink /dev/ptmx");
+    }
+
+    unlink("/dev/fd");
+    if (symlink("/proc/self/fd", "/dev/fd") == -1) {
+        perror("symlink /dev/fd");
+    }
+
+    unlink("/dev/stdin");
+    if (symlink("/proc/self/fd/0", "/dev/stdin") == -1) {
+        perror("symlink /dev/stdin");
+    }
+
+    unlink("/dev/stdout");
+    if (symlink("/proc/self/fd/1", "/dev/stdout") == -1) {
+        perror("symlink /dev/stdout");
+    }
+
+    unlink("/dev/stderr");
+    if (symlink("/proc/self/fd/2", "/dev/stderr") == -1) {
+        perror("symlink /dev/stderr");
     }
 
     chmod("/dev/ptmx", 0666);
@@ -398,12 +419,10 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
-    // set environment variables
+    // clear environment variables
     clearenv();
 
-    setenv("TERM", "xterm-256color", 1);
-    setenv("PATH", "/bin:/sbin:/usr/bin:/usr/sbin", 1);
-
+    // set environment variables
     if (uid == 0) {
         setenv("HOME", "/root", 1);
         setenv("USER", "root", 1);
