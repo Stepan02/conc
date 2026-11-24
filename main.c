@@ -42,10 +42,6 @@ static int disk_limit = 1024; // mb
 static char file_sources[10][512];
 static int file_count = 0;
 
-// global env variables
-static char **env_variables = NULL;
-static int env_variables_count = 0;
-
 // global uid and gid variables
 static int uid = 0; // default uid
 static int gid = 0; // default gid
@@ -88,6 +84,8 @@ static int container_runtime(void *arg) {
     const mount_t *mounts = (const mount_t *)args[25];
     const int mounts_count = (int)args[26];
     const hooks_config_t *hooks = (const hooks_config_t *)args[27];
+    char **env_variables = (char **)args[28];
+    const int env_variables_count = (int)args[29];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -604,6 +602,9 @@ static int create_container(char *argv[], int argc) {
     uid = config.uid;
     gid = config.gid;
 
+    char **env_variables = NULL;
+    const int env_variables_count = config.env_variables_count;
+
     if (config.env_variables_count > 0) {
         env_variables = calloc(config.env_variables_count + 1, sizeof(char *));
 
@@ -860,11 +861,12 @@ static int create_container(char *argv[], int argc) {
     const hooks_config_t *hooks = &config.hooks;
 
     // clone child
-    uintptr_t child_args[28] = {
+    uintptr_t child_args[30] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
         readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
         (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_default_errno, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count,
-        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count, (uintptr_t)hooks
+        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count, (uintptr_t)hooks,
+        (uintptr_t)env_variables, env_variables_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
