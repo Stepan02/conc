@@ -51,3 +51,9 @@ typedef struct {
     hook_t *post_stop;
     int post_stop_count;
 } hooks_config_t;
+
+typedef struct {
+    char *type;
+    uint64_t soft_limit;
+    uint64_t hard_limit;
+} rlimit_t;

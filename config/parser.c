@@ -172,6 +172,39 @@ int read_config(config_t *config, const char *bundle_path) {
                 config->console_height = height->valueint;
             }
         }
+
+        const cJSON *rlimits = cJSON_GetObjectItemCaseSensitive(process, "rlimits");
+        if (cJSON_IsArray(rlimits)) {
+            cJSON *rlimit = NULL;
+            cJSON_ArrayForEach(rlimit, rlimits) {
+                const cJSON *type = cJSON_GetObjectItemCaseSensitive(rlimit, "type");
+                const cJSON *hard = cJSON_GetObjectItemCaseSensitive(rlimit, "hard");
+                const cJSON *soft = cJSON_GetObjectItemCaseSensitive(rlimit, "soft");
+
+                if (!cJSON_IsString(type) || !type->valuestring || !cJSON_IsNumber(hard) || !cJSON_IsNumber(soft)) {
+                    continue;
+                }
+
+                int idx = config->rlimits_count;
+                rlimit_t *next = realloc(config->rlimits, (size_t)(idx + 1) * sizeof(rlimit_t));
+                if (!next) {
+                    perror("failed to allocate rlimit");
+                    break;
+                }
+
+                char *rlimit_type = strdup(type->valuestring);
+                if (!rlimit_type) {
+                    perror("failed to allocate rlimit");
+                    break;
+                }
+
+                config->rlimits = next;
+                config->rlimits[idx].type = rlimit_type;
+                config->rlimits[idx].hard_limit = (uint64_t)hard->valuedouble;
+                config->rlimits[idx].soft_limit = (uint64_t)soft->valuedouble;
+                config->rlimits_count = idx + 1;
+            }
+        }
     }
 
     const cJSON *linux_object = cJSON_GetObjectItemCaseSensitive(config_file, "linux");
@@ -1118,5 +1151,14 @@ void free_config(config_t *config) {
         free(config->hooks.post_stop);
         config->hooks.post_stop = NULL;
         config->hooks.post_stop_count = 0;
+    }
+
+    if (config->rlimits != NULL) {
+        for (int i = 0; i < config->rlimits_count; i++) {
+            free(config->rlimits[i].type);
+        }
+
+        free(config->rlimits);
+        config->rlimits = NULL;
     }
 }

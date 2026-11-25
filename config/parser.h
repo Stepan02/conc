@@ -50,6 +50,8 @@ typedef struct {
     int seccomp_architectures_count;
     unsigned int seccomp_default_errno;
     hooks_config_t hooks;
+    rlimit_t *rlimits;
+    int rlimits_count;
 } config_t;
 
 typedef struct {

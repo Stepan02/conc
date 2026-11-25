@@ -16,6 +16,7 @@
 #include <termios.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/resource.h>
 #include <grp.h>
 #include "config/parser.h"
 #include "filesystem/fs.h"
@@ -86,6 +87,8 @@ static int container_runtime(void *arg) {
     const hooks_config_t *hooks = (const hooks_config_t *)args[27];
     char **env_variables = (char **)args[28];
     const int env_variables_count = (int)args[29];
+    const rlimit_t *rlimits = (const rlimit_t *)args[30];
+    const int rlimits_count = (int)args[31];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -509,6 +512,23 @@ static int container_runtime(void *arg) {
         umask((mode_t)umask_value);
     }
 
+    // set rlimits
+    if (rlimits && rlimits_count > 0) {
+        for (int i = 0; i <rlimits_count; i++) {
+            if (rlimits[i].type && strcmp(rlimits[i].type, "RLIMIT_NOFILE") == 0) {
+                struct rlimit rl = {
+                    .rlim_cur = (rlim_t)rlimits[i].soft_limit,
+                    .rlim_max = (rlim_t)rlimits[i].hard_limit,
+                };
+
+                if (setrlimit(RLIMIT_NOFILE, &rl) < 0) {
+                    perror("setrlimit");
+                    _exit(1);
+                }
+            }
+        }
+    }
+
     // run startcontainer hooks
     if (hooks && hooks->start_container_count > 0) {
         for (int i = 0; i < hooks->start_container_count; i++) {
@@ -860,13 +880,16 @@ static int create_container(char *argv[], int argc) {
 
     const hooks_config_t *hooks = &config.hooks;
 
+    const rlimit_t *rlimits = config.rlimits;
+    const int rlimits_count = config.rlimits_count;
+
     // clone child
-    uintptr_t child_args[30] = {
+    uintptr_t child_args[32] = {
         share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
         readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
         (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_default_errno, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count,
         (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count, (uintptr_t)hooks,
-        (uintptr_t)env_variables, env_variables_count
+        (uintptr_t)env_variables, env_variables_count, (uintptr_t)rlimits, rlimits_count
     };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
