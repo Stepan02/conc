@@ -117,7 +117,7 @@ static uint32_t get_architecture(const char *architecture_name) {
     return 0;
 }
 
-int setup_syscall_filter(const char *default_action_name, const unsigned int default_errno_return, const object_t *syscalls, const int syscalls_count, const int no_new_privileges, char **architectures, const int architectures_count) {
+int setup_syscall_filter(const char *default_action_name, const unsigned int default_errno_return, const object_t *syscalls, const int syscalls_count, char **architectures, const int architectures_count) {
     int user_notif = 0;
 
     // set default action
@@ -179,15 +179,6 @@ int setup_syscall_filter(const char *default_action_name, const unsigned int def
                     return -1;
                 }
             }
-        }
-    }
-
-    // disallow elevating privileges if nonewprivileges is set
-    if (no_new_privileges) {
-        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
-            perror("pr_set_no_new_privs");
-            seccomp_release(ctx);
-            return -1;
         }
     }
 

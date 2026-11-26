@@ -18,6 +18,7 @@
 #include <sys/syscall.h>
 #include <sys/resource.h>
 #include <grp.h>
+#include <sys/prctl.h>
 #include "config/parser.h"
 #include "filesystem/fs.h"
 #include "sandbox/resources.h"
@@ -436,12 +437,20 @@ static int container_runtime(void *arg) {
         putenv(env_variables[i]);
     }
 
+    // disallow elevating privileges if nonewprivileges is set
+    if (no_new_privileges) {
+        if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
+            perror("pr_set_no_new_privs");
+            _exit(1);
+        }
+    }
+
     int notify_fd = -1;
 
     // init syscall blacklist if set
     if (seccomp_default_action && seccomp_default_action[0] != '\0' && seccomp_syscall_count > 0) {
-        notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_default_errno, seccomp_syscalls, seccomp_syscall_count,
-            no_new_privileges, seccomp_architectures, seccomp_architectures_count);
+        notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_default_errno, seccomp_syscalls,
+            seccomp_syscall_count, seccomp_architectures, seccomp_architectures_count);
 
         // -1 = blacklist fail, -2 = no user notif set
         if (notify_fd == -1) {
