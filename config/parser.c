@@ -211,59 +211,87 @@ int read_config(config_t *config, const char *bundle_path) {
     if (cJSON_IsObject(linux_object)) {
         const cJSON *resources = cJSON_GetObjectItemCaseSensitive(linux_object, "resources");
         if (cJSON_IsObject(resources)) {
+            device_t default_devices[] = {
+                { .allow = 1, .access = "rwm", .path = "/dev/null", .uid = config->uid, .gid = config->gid, .file_mode = 0666 },
+                { .allow = 1, .access = "rwm", .path = "/dev/zero", .uid = config->uid, .gid = config->gid, .file_mode = 0666 },
+                { .allow = 1, .access = "rwm", .path = "/dev/tty", .uid = config->uid, .gid = config->gid,  .file_mode = 0666 },
+                { .allow = 1, .access = "rwm", .path = "/dev/full", .uid = config->uid, .gid = config->gid,  .file_mode = 0666 },
+                { .allow = 1, .access = "rwm", .path = "/dev/random", .uid = config->uid, .gid = config->gid,  .file_mode = 0666 },
+                { .allow = 1, .access = "rwm", .path = "/dev/urandom", .uid = config->uid, .gid = config->gid,  .file_mode = 0666 }
+            };
+
             const cJSON *devices = cJSON_GetObjectItemCaseSensitive(resources, "devices");
-            if (cJSON_IsArray(devices)) {
-                const int count = cJSON_GetArraySize(devices);
-                if (count > 0) {
-                    config->devices = malloc(sizeof(device_t) * count);
-                    config->devices_count = count;
+            const int count = cJSON_GetArraySize(devices);
 
-                    for (int i = 0; i < count; i++) {
-                        const cJSON *device = cJSON_GetArrayItem(devices, i);
+            if (cJSON_IsArray(devices) && count > 0) {
+                config->devices = malloc(sizeof(device_t) * count);
+                config->devices_count = count;
 
-                        const cJSON *path = cJSON_GetObjectItemCaseSensitive(device, "path");
-                        if (cJSON_IsString(path) && path->valuestring) {
-                            strncpy(config->devices[i].path, path->valuestring, sizeof(config->devices[i].path) - 1);
-                            config->devices[i].path[sizeof(config->devices[i].path) - 1] = '\0';
-                        } else {
-                            config->devices[i].path[0] = '\0';
-                        }
+                for (int i = 0; i < count; i++) {
+                    const cJSON *device = cJSON_GetArrayItem(devices, i);
 
-                        const cJSON *allow = cJSON_GetObjectItemCaseSensitive(device, "allow");
-                        if (cJSON_IsBool(allow)) {
-                            config->devices[i].allow = cJSON_IsTrue(allow);
-                        } else {
-                            config->devices[i].allow = 0;
-                        }
-
-                        const cJSON *access = cJSON_GetObjectItemCaseSensitive(device, "access");
-                        if (cJSON_IsString(access) && access->valuestring) {
-                            strncpy(config->devices[i].access, access->valuestring, sizeof(config->devices[i].access) - 1);
-                            config->devices[i].access[sizeof(config->devices[i].access) - 1] = '\0';
-                        } else {
-                            config->devices[i].access[0] = '\0';
-                        }
-
-                        config->devices[i].uid = 0;
-                        config->devices[i].gid = 0;
-
-                        const cJSON *device_uid = cJSON_GetObjectItemCaseSensitive(device, "uid");
-                        if (cJSON_IsNumber(device_uid)) {
-                            config->devices[i].uid = (uint32_t) device_uid->valuedouble;
-                        }
-
-                        const cJSON *device_gid = cJSON_GetObjectItemCaseSensitive(device, "gid");
-                        if (cJSON_IsNumber(device_gid)) {
-                            config->devices[i].gid = (uint32_t) device_gid->valuedouble;
-                        }
-
-                        config->devices[i].file_mode = 0666;
-
-                        const cJSON *file_mode = cJSON_GetObjectItemCaseSensitive(device, "fileMode");
-                        if (cJSON_IsNumber(file_mode)) {
-                            config->devices[i].file_mode = (uint32_t) file_mode->valuedouble;
-                        }
+                    const cJSON *path = cJSON_GetObjectItemCaseSensitive(device, "path");
+                    if (cJSON_IsString(path) && path->valuestring) {
+                        strncpy(config->devices[i].path, path->valuestring, sizeof(config->devices[i].path) - 1);
+                        config->devices[i].path[sizeof(config->devices[i].path) - 1] = '\0';
+                    } else {
+                        config->devices[i].path[0] = '\0';
                     }
+
+                    const cJSON *allow = cJSON_GetObjectItemCaseSensitive(device, "allow");
+                    if (cJSON_IsBool(allow)) {
+                        config->devices[i].allow = cJSON_IsTrue(allow);
+                    } else {
+                        config->devices[i].allow = 0;
+                    }
+
+                    const cJSON *access = cJSON_GetObjectItemCaseSensitive(device, "access");
+                    if (cJSON_IsString(access) && access->valuestring) {
+                        strncpy(config->devices[i].access, access->valuestring, sizeof(config->devices[i].access) - 1);
+                        config->devices[i].access[sizeof(config->devices[i].access) - 1] = '\0';
+                    } else {
+                        config->devices[i].access[0] = '\0';
+                    }
+
+                    config->devices[i].uid = 0;
+                    config->devices[i].gid = 0;
+
+                    const cJSON *device_uid = cJSON_GetObjectItemCaseSensitive(device, "uid");
+                    if (cJSON_IsNumber(device_uid)) {
+                        config->devices[i].uid = (uint32_t) device_uid->valuedouble;
+                    }
+
+                    const cJSON *device_gid = cJSON_GetObjectItemCaseSensitive(device, "gid");
+                    if (cJSON_IsNumber(device_gid)) {
+                        config->devices[i].gid = (uint32_t) device_gid->valuedouble;
+                    }
+
+                    config->devices[i].file_mode = 0666;
+
+                    const cJSON *file_mode = cJSON_GetObjectItemCaseSensitive(device, "fileMode");
+                    if (cJSON_IsNumber(file_mode)) {
+                        config->devices[i].file_mode = (uint32_t) file_mode->valuedouble;
+                    }
+                }
+            } else {
+                // create a list of 6 default devices if no devices array is defined
+                config->devices = malloc(sizeof(device_t) * 6);
+                config->devices_count = 6;
+
+                for (int i = 0; i < 6; i++) {
+                    const device_t device = default_devices[i];
+                    config->devices[i].allow = device.allow;
+
+                    strncpy(config->devices[i].path, device.path, sizeof(config->devices[i].path) - 1);
+                    config->devices[i].path[sizeof(config->devices[i].path) - 1] = '\0';
+
+                    strncpy(config->devices[i].access, device.access, sizeof(config->devices[i].access) - 1);
+                    config->devices[i].access[sizeof(config->devices[i].access) - 1] = '\0';
+
+                    config->devices[i].uid = device.uid;
+                    config->devices[i].gid = device.gid;
+
+                    config->devices[i].file_mode = device.file_mode;
                 }
             }
 

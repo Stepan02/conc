@@ -191,13 +191,13 @@ static int container_runtime(void *arg) {
         }
 
         // set device owner
-        if (chown(path, devices[i].uid, devices[i].gid) == -1) {
+        if (chown(path, devices[i].uid, devices[i].gid) == -1 && errno != EPERM) {
             perror("chown device");
             _exit(1);
         }
 
         // set device file mode
-        if (chmod(path, devices[i].file_mode) == -1) {
+        if (chmod(path, devices[i].file_mode) == -1 && errno != EPERM) {
             perror("chmod device");
             _exit(1);
         }
