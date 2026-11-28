@@ -31,65 +31,19 @@
 // global container name variable
 static char container_name[64];
 
-// global hostname variable
-static char hostname[64];
-
-// global current working directory variable
-static char cwd[PATH_MAX] = "/"; // default directory
-
-// global disk_limit variable
-static int disk_limit = 1024; // mb
-
 // global files to copy buffers
 static char file_sources[10][512];
 static int file_count = 0;
 
-// global uid and gid variables
-static int uid = 0; // default uid
-static int gid = 0; // default gid
-
-// global shell mode variable
-static int shell_mode = 1; // shell runtime is enabled by default (1 = enabled, 0 = disabled)
-
 // setup child process stack and command variable
 #define STACK_SIZE (1024 * 1024)
 static char child_stack[STACK_SIZE];
-static char **command = NULL;
 
 static int container_runtime(void *arg) {
     const uintptr_t *args = arg;
-    const int share_net = (int)args[0];
+    const config_t *config = (const config_t *)args[0];
     const int sync_sock = (int)args[1];
     const int slave_fd = (int)args[2];
-    const int readonly_fs = (int)args[3];
-    const int no_new_privileges = (int)args[4];
-    const int *additional_gids = (const int *)args[5];
-    const int additional_gids_count = (int)args[6];
-    char **readonly_paths = (char **)args[7];
-    const int readonly_paths_count = (int)args[8];
-    char **masked_paths = (char **)args[9];
-    const int masked_paths_count = (int)args[10];
-    const int oom_score_adj = (int)args[11];
-    const object_t *sysctl = (const object_t *)args[12];
-    const int sysctl_count = (int)args[13];
-    const int umask_value = (int)args[14];
-    const device_t *devices = (const device_t *)args[15];
-    const int devices_count = (int)args[16];
-    const char *rootfs_path = (const char *)args[17];
-    const int disk_size = (int)args[18];
-    const char *seccomp_default_action = (const char *)args[19];
-    const unsigned int seccomp_default_errno = (uint32_t)args[20];
-    const object_t *seccomp_syscalls = (const object_t *)args[21];
-    const int seccomp_syscall_count = (int)args[22];
-    char **seccomp_architectures = (char **)args[23];
-    const int seccomp_architectures_count = (int)args[24];
-    const mount_t *mounts = (const mount_t *)args[25];
-    const int mounts_count = (int)args[26];
-    const hooks_config_t *hooks = (const hooks_config_t *)args[27];
-    char **env_variables = (char **)args[28];
-    const int env_variables_count = (int)args[29];
-    const rlimit_t *rlimits = (const rlimit_t *)args[30];
-    const int rlimits_count = (int)args[31];
 
     if (mount(NULL, "/", NULL, MS_REC | MS_PRIVATE, NULL) == -1) {
         perror("mount MS_PRIVATE");
@@ -103,7 +57,7 @@ static int container_runtime(void *arg) {
 
     // resolve rootfs path
     char full_rootfs_path[PATH_MAX];
-    if (realpath(rootfs_path, full_rootfs_path) == NULL) {
+    if (realpath(config->rootfs_path, full_rootfs_path) == NULL) {
         fprintf(stderr, "failed to resolve full rootfs path\n");
         _exit(1);
     }
@@ -114,7 +68,7 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
-    if (mount_overlayfs(full_rootfs_path, container_name, disk_size) == -1) {
+    if (mount_overlayfs(full_rootfs_path, container_name, config->disk_limit) == -1) {
         fprintf(stderr, "failed to mount overlayfs\n");
         _exit(1);
     }
@@ -164,7 +118,7 @@ static int container_runtime(void *arg) {
     }
 
     // set sysctl flags
-    if (setup_sysctl(sysctl, sysctl_count) < 0) {
+    if (setup_sysctl(config->sysctl, config->sysctl_count) < 0) {
         _exit(1);
     }
 
@@ -172,32 +126,32 @@ static int container_runtime(void *arg) {
     mkdir(path, 0755);
 
     // mount devices
-    for (int i = 0; i < devices_count; i++) {
+    for (int i = 0; i < config->devices_count; i++) {
         // ignore disallowed devices or global policy
-        if (!devices[i].allow || devices[i].path[0] == '\0') {
+        if (!config->devices[i].allow || config->devices[i].path[0] == '\0') {
             continue;
         }
 
-        snprintf(path, sizeof(path), "%s%s", merged, devices[i].path);
+        snprintf(path, sizeof(path), "%s%s", merged, config->devices[i].path);
 
         const int fd = open(path, O_WRONLY | O_CREAT, 0666);
         if (fd != -1) {
             close(fd);
         }
 
-        if (mount(devices[i].path, path, NULL, MS_BIND, NULL) == -1) {
-            perror(devices[i].path);
+        if (mount(config->devices[i].path, path, NULL, MS_BIND, NULL) == -1) {
+            perror(config->devices[i].path);
             _exit(1);
         }
 
         // set device owner
-        if (chown(path, devices[i].uid, devices[i].gid) == -1 && errno != EPERM) {
+        if (chown(path, config->devices[i].uid, config->devices[i].gid) == -1 && errno != EPERM) {
             perror("chown device");
             _exit(1);
         }
 
         // set device file mode
-        if (chmod(path, devices[i].file_mode) == -1 && errno != EPERM) {
+        if (chmod(path, config->devices[i].file_mode) == -1 && errno != EPERM) {
             perror("chmod device");
             _exit(1);
         }
@@ -214,54 +168,54 @@ static int container_runtime(void *arg) {
     }
 
     // mount hosts mounts
-    if (mounts_count > 0) {
-        for (int i = 0; i < mounts_count; i++) {
+    if (config->mounts_count > 0) {
+        for (int i = 0; i < config->mounts_count; i++) {
             char target_path[PATH_MAX * 2];
-            snprintf(target_path, sizeof(target_path), "%s%s", merged, mounts[i].destination);
+            snprintf(target_path, sizeof(target_path), "%s%s", merged, config->mounts[i].destination);
 
             // ensure the target path exits
             mkdir(target_path, 0755);
 
             // setup mount flags
             unsigned int flags = 0;
-            if (mounts[i].readonly || mounts[i].nosuid || mounts[i].nodev || mounts[i].noexec) {
-                if (mounts[i].bind) {
+            if (config->mounts[i].readonly || config->mounts[i].nosuid || config->mounts[i].nodev || config->mounts[i].noexec) {
+                if (config->mounts[i].bind) {
                     flags |= MS_BIND;
                 }
 
-                if (mounts[i].readonly) {
+                if (config->mounts[i].readonly) {
                     flags |= MS_RDONLY;
                 }
 
-                if (mounts[i].nosuid) {
+                if (config->mounts[i].nosuid) {
                     flags |= MS_NOSUID;
                 }
 
-                if (mounts[i].nodev) {
+                if (config->mounts[i].nodev) {
                     flags |= MS_NODEV;
                 }
 
-                if (mounts[i].noexec) {
+                if (config->mounts[i].noexec) {
                     flags |= MS_NOEXEC;
                 }
             }
 
             // explicit type bind or bind flag mount
-            if (strcmp(mounts[i].type, "bind") == 0 || (mounts[i].bind && strcmp(mounts[i].type, "tmpfs") != 0) != 0) {
+            if (strcmp(config->mounts[i].type, "bind") == 0 || (config->mounts[i].bind && strcmp(config->mounts[i].type, "tmpfs") != 0) != 0) {
                 // bind mount
-                if (mount(mounts[i].source, target_path, NULL, MS_BIND | MS_REC, NULL) < 0) {
-                    fprintf(stderr, "failed to bind mount %s to %s\n", mounts[i].source, mounts[i].destination);
+                if (mount(config->mounts[i].source, target_path, NULL, MS_BIND | MS_REC, NULL) < 0) {
+                    fprintf(stderr, "failed to bind mount %s to %s\n", config->mounts[i].source, config->mounts[i].destination);
                     _exit(1);
                 }
 
                 if (mount(NULL, target_path, NULL, MS_REMOUNT | MS_BIND | MS_REC | flags, NULL) < 0) {
-                    fprintf(stderr, "failed to bind remount %s to %s\n", mounts[i].source, mounts[i].destination);
+                    fprintf(stderr, "failed to bind remount %s to %s\n", config->mounts[i].source, config->mounts[i].destination);
                     _exit(1);
                 }
             } else {
                 // vfs mount
-                if (mount(mounts[i].source, target_path, mounts[i].type, flags, NULL) < 0) {
-                    fprintf(stderr, "failed to mount %s to %s\n", mounts[i].source, mounts[i].destination);
+                if (mount(config->mounts[i].source, target_path, config->mounts[i].type, flags, NULL) < 0) {
+                    fprintf(stderr, "failed to mount %s to %s\n", config->mounts[i].source, config->mounts[i].destination);
                     _exit(1);
                 }
             }
@@ -269,9 +223,9 @@ static int container_runtime(void *arg) {
     }
 
     // run createcontainer hooks
-    if (hooks && hooks->create_container_count > 0) {
-        for (int i = 0; i < hooks->create_container_count; i++) {
-            if (run_hook(&hooks->create_container[i]) != 0) {
+    if (config->hooks.create_container_count > 0) {
+        for (int i = 0; i < config->hooks.create_container_count; i++) {
+            if (run_hook(&config->hooks.create_container[i]) != 0) {
                 _exit(1);
             }
         }
@@ -295,7 +249,7 @@ static int container_runtime(void *arg) {
         _exit(1);
     }
 
-    if (chdir(cwd) == -1) {
+    if (chdir(config->cwd) == -1) {
         perror("chdir cwd");
         _exit(1);
     }
@@ -352,8 +306,8 @@ static int container_runtime(void *arg) {
     chmod("/dev/pts", 0755);
 
     // mount read-only paths
-    for (int i = 0; i < readonly_paths_count; i++) {
-        const char *readonly_path = readonly_paths[i];
+    for (int i = 0; i < config->readonly_paths_count; i++) {
+        const char *readonly_path = config->readonly_paths[i];
 
         // read-only remount
         if (mount(NULL, readonly_path, NULL, MS_REMOUNT | MS_RDONLY | MS_BIND, NULL) < 0) {
@@ -372,8 +326,8 @@ static int container_runtime(void *arg) {
     }
 
     // mount masked paths
-    for (int i = 0; i < masked_paths_count; i++) {
-        const char *masked_path = masked_paths[i];
+    for (int i = 0; i < config->masked_paths_count; i++) {
+        const char *masked_path = config->masked_paths[i];
 
         // skip nonexisting paths
         struct stat st;
@@ -397,7 +351,7 @@ static int container_runtime(void *arg) {
     }
 
     // setup loopback if network is isolated
-    if (!share_net) {
+    if (!(config->namespaces & CLONE_NEWNET)) {
         if (setup_loopback() != 0) {
             perror("setup lo");
             _exit(1);
@@ -405,19 +359,25 @@ static int container_runtime(void *arg) {
     }
 
     // set filesystem as read-only if read-only flag is provided
-    if (readonly_fs) {
+    if (config->readonly_fs) {
         if (mount(NULL, "/", NULL, MS_BIND | MS_REMOUNT | MS_RDONLY, NULL) == -1) {
             perror("remount read-only rootfs");
         }
     }
 
     // setup hostname
-    if (sethostname(hostname, strlen(hostname)) == -1) {
-        perror("hostname");
+    if (strlen(config->custom_hostname) > 0) {
+        if (sethostname(config->custom_hostname, strlen(config->custom_hostname)) == -1) {
+            perror("hostname");
+        }
+    } else {
+        if (sethostname(container_name, strlen(container_name)) == -1) {
+            perror("hostname");
+        }
     }
 
     // set oom score limit
-    if (set_limits(oom_score_adj) < 0) {
+    if (set_limits(config->oom_score_adj) < 0) {
         _exit(1);
     }
 
@@ -425,7 +385,7 @@ static int container_runtime(void *arg) {
     clearenv();
 
     // set environment variables
-    if (uid == 0) {
+    if (config->uid == 0) {
         setenv("HOME", "/root", 1);
         setenv("USER", "root", 1);
     } else {
@@ -433,12 +393,12 @@ static int container_runtime(void *arg) {
         setenv("USER", "runner", 1);
     }
 
-    for (int i = 0; i < env_variables_count; i++) {
-        putenv(env_variables[i]);
+    for (int i = 0; i < config->env_variables_count; i++) {
+        putenv(config->env_variables[i]);
     }
 
     // disallow elevating privileges if nonewprivileges is set
-    if (no_new_privileges) {
+    if (config->no_new_privileges) {
         if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) {
             perror("pr_set_no_new_privs");
             _exit(1);
@@ -448,9 +408,9 @@ static int container_runtime(void *arg) {
     int notify_fd = -1;
 
     // init syscall blacklist if set
-    if (seccomp_default_action && seccomp_default_action[0] != '\0' && seccomp_syscall_count > 0) {
-        notify_fd = setup_syscall_filter(seccomp_default_action, seccomp_default_errno, seccomp_syscalls,
-            seccomp_syscall_count, seccomp_architectures, seccomp_architectures_count);
+    if (config->seccomp_default_action && config->seccomp_default_action[0] != '\0' && config->seccomp_syscalls_count > 0) {
+        notify_fd = setup_syscall_filter(config->seccomp_default_action, config->seccomp_default_errno, config->seccomp_syscalls,
+            config->seccomp_syscalls_count, config->seccomp_architectures, config->seccomp_architectures_count);
 
         // -1 = blacklist fail, -2 = no user notif set
         if (notify_fd == -1) {
@@ -477,7 +437,7 @@ static int container_runtime(void *arg) {
     close(sync_sock);
 
     // no shell mode
-    if (shell_mode == 0) {
+    if (config->shell_mode == 0) {
         // disable stdin
         const int null_fd = open("/dev/null", O_RDONLY);
         if (null_fd != -1) {
@@ -498,36 +458,36 @@ static int container_runtime(void *arg) {
     }
 
     // set groups
-    if (setgroups(additional_gids_count, (const gid_t *)additional_gids) < 0) {
+    if (setgroups(config->additional_gids_count, (const gid_t *)config->additional_gids) < 0) {
         perror("setgroups");
         _exit(1);
     }
 
     // set uid and gid
-    if (uid != 0 || gid != 0) {
-        if (setgid(gid) < 0) {
+    if (config->uid != 0 || config->gid != 0) {
+        if (setgid(config->gid) < 0) {
             perror("setgid");
             _exit(1);
         }
 
-        if (setuid(uid) < 0) {
+        if (setuid(config->uid) < 0) {
             perror("setuid");
             _exit(1);
         }
     }
 
     // set umask if specified
-    if (umask_value != -1) {
-        umask((mode_t)umask_value);
+    if (config->umask != -1) {
+        umask((mode_t)config->umask);
     }
 
     // set rlimits
-    if (rlimits && rlimits_count > 0) {
-        for (int i = 0; i <rlimits_count; i++) {
-            if (rlimits[i].type && strcmp(rlimits[i].type, "RLIMIT_NOFILE") == 0) {
+    if (config->rlimits && config->rlimits_count > 0) {
+        for (int i = 0; i < config->rlimits_count; i++) {
+            if (config->rlimits[i].type && strcmp(config->rlimits[i].type, "RLIMIT_NOFILE") == 0) {
                 struct rlimit rl = {
-                    .rlim_cur = (rlim_t)rlimits[i].soft_limit,
-                    .rlim_max = (rlim_t)rlimits[i].hard_limit,
+                    .rlim_cur = config->rlimits[i].soft_limit,
+                    .rlim_max = config->rlimits[i].hard_limit,
                 };
 
                 if (setrlimit(RLIMIT_NOFILE, &rl) < 0) {
@@ -539,17 +499,22 @@ static int container_runtime(void *arg) {
     }
 
     // run startcontainer hooks
-    if (hooks && hooks->start_container_count > 0) {
-        for (int i = 0; i < hooks->start_container_count; i++) {
-            if (run_hook(&hooks->start_container[i]) != 0) {
+    if (config->hooks.start_container_count > 0) {
+        for (int i = 0; i < config->hooks.start_container_count; i++) {
+            if (run_hook(&config->hooks.start_container[i]) != 0) {
                 _exit(1);
             }
         }
     }
 
+    if (!config->command || !config->command[0]) {
+        fprintf(stderr, "missing command\n");
+        _exit(1);
+    }
+
     // close descriptors
     syscall(SYS_close_range, 3, ~0U, 0);
-    execvp(command[0], command);
+    execvp(config->command[0], config->command);
     perror("execvp");
     _exit(1);
 
@@ -557,15 +522,6 @@ static int container_runtime(void *arg) {
 }
 
 static int create_container(char *argv[], int argc) {
-    // default values
-    int ram_limit = 256; // mb
-    int cpu_limit = 100000; // us
-    char custom_hostname[256] = "";
-    int readonly_fs = 0; // filesystem is writable by default
-    int no_new_privileges = 1; // disallow elevating privileges by default
-    int console_height = 24; // default console rows
-    int console_width = 80; // default console columns
-
     // save container name
     if (argc > 1) {
         snprintf(container_name, sizeof(container_name), "%s", argv[argc - 1]);
@@ -605,46 +561,6 @@ static int create_container(char *argv[], int argc) {
         return 1;
     }
 
-    shell_mode = config.shell_mode;
-    readonly_fs = config.readonly_fs;
-
-    if (config.cwd[0] != '\0') {
-        snprintf(cwd, sizeof(cwd), "%s", config.cwd);
-    }
-
-    int share_net;
-
-    if (config.namespaces & CLONE_NEWNET) {
-        share_net = 0;
-    } else {
-        share_net = 1;
-    }
-
-    if (config.custom_hostname[0] != '\0') {
-        snprintf(custom_hostname, sizeof(custom_hostname), "%s", config.custom_hostname);
-    }
-
-    ram_limit = config.ram_limit;
-    cpu_limit = config.cpu_limit;
-    disk_limit = config.disk_limit;
-
-    uid = config.uid;
-    gid = config.gid;
-
-    char **env_variables = NULL;
-    const int env_variables_count = config.env_variables_count;
-
-    if (config.env_variables_count > 0) {
-        env_variables = calloc(config.env_variables_count + 1, sizeof(char *));
-
-        for (int i = 0; i < config.env_variables_count; i++) {
-            env_variables[i] = config.env_variables[i];
-        }
-    }
-
-    command = config.command;
-    no_new_privileges = config.no_new_privileges;
-
     // prepare container base directory
     char base_dir[256];
     snprintf(base_dir, sizeof(base_dir), "/tmp/runner-%s", container_name);
@@ -660,7 +576,7 @@ static int create_container(char *argv[], int argc) {
 
     const int shell_mode_fd = open(shell_mode_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (shell_mode_fd != -1) {
-        const char *shell_mode_value = shell_mode ? "1\n" : "0\n";
+        const char *shell_mode_value = config.shell_mode ? "1\n" : "0\n";
 
         if (write(shell_mode_fd, shell_mode_value, 2) < 0) {
             perror("failed to set shell mode");
@@ -695,16 +611,13 @@ static int create_container(char *argv[], int argc) {
     }
 
     // write console size to a file
-    console_height = config.console_height;
-    console_width = config.console_width;
-
     char console_size_path[512];
     snprintf(console_size_path, sizeof(console_size_path), "%s/console-size", base_dir);
 
     const int console_size_fd = open(console_size_path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (console_size_fd != -1) {
         char console_size_value[64];
-        const int console_size = snprintf(console_size_value, sizeof(console_size_value), "%d %d\n", console_height, console_width);
+        const int console_size = snprintf(console_size_value, sizeof(console_size_value), "%d %d\n", config.console_height, config.console_width);
 
         if (write(console_size_fd, console_size_value, console_size) < 0) {
             perror("failed to set console size");
@@ -749,7 +662,6 @@ static int create_container(char *argv[], int argc) {
     if (supervisor_pid < 0) {
         perror("failed to fork supervisor");
         close(socket_fd);
-        free(env_variables);
         return 1;
     }
 
@@ -808,7 +720,6 @@ static int create_container(char *argv[], int argc) {
         fflush(stdout);
 
         close(socket_fd);
-        free(env_variables);
         free_config(&config);
         _exit(0);
     }
@@ -826,17 +737,10 @@ static int create_container(char *argv[], int argc) {
 
     close(socket_fd);
 
-    // set hostname
-    if (strlen(custom_hostname) > 0) {
-        snprintf(hostname, sizeof(hostname), "%s", custom_hostname);
-    } else {
-        snprintf(hostname, sizeof(hostname), "%s", container_name);
-    }
-
     // prepare pty
     int master_fd = -1;
     int slave_fd = -1;
-    if (shell_mode) {
+    if (config.shell_mode) {
         if (openpty(&master_fd, &slave_fd, NULL, NULL, NULL) < 0) {
             perror("openpty");
             exit(1);
@@ -849,57 +753,8 @@ static int create_container(char *argv[], int argc) {
         exit(1);
     }
 
-    const uintptr_t additional_gids = (uintptr_t)config.additional_gids;
-    const int additional_gids_count = config.additional_gids_count;
-
-    const uintptr_t readonly_paths = (uintptr_t)config.readonly_paths;
-    const uintptr_t readonly_paths_count = (uintptr_t)config.readonly_paths_count;
-
-    const uintptr_t masked_paths = (uintptr_t)config.masked_paths;
-    const uintptr_t masked_paths_count = (uintptr_t)config.masked_paths_count;
-
-    const int oom_score_adj = config.oom_score_adj;
-
-    const uintptr_t sysctl = (uintptr_t)config.sysctl;
-    const int sysctl_count = config.sysctl_count;
-
-    const int umask = config.umask;
-
-    const uintptr_t devices = (uintptr_t)config.devices;
-    const int devices_count = config.devices_count;
-
-    char rootfs_path[PATH_MAX];
-
-    if (config.rootfs_path[0] == '/') {
-        // set rootfs path relative to bundle path if it is not absolute
-        snprintf(rootfs_path, sizeof(rootfs_path), "%s", config.rootfs_path);
-    } else {
-        snprintf(rootfs_path, sizeof(rootfs_path), "%s/%s", bundle_path_value, config.rootfs_path);
-    }
-
-    const char *seccomp_default_action = config.seccomp_default_action;
-    const unsigned int seccomp_default_errno = config.seccomp_default_errno;
-    const object_t *seccomp_syscalls = config.seccomp_syscalls;
-    const int seccomp_syscalls_count = config.seccomp_syscalls_count;
-    char **seccomp_architectures = config.seccomp_architectures;
-    const int seccomp_architectures_count = config.seccomp_architectures_count;
-
-    const mount_t *mounts = config.mounts;
-    const int mounts_count = config.mounts_count;
-
-    const hooks_config_t *hooks = &config.hooks;
-
-    const rlimit_t *rlimits = config.rlimits;
-    const int rlimits_count = config.rlimits_count;
-
     // clone child
-    uintptr_t child_args[32] = {
-        share_net, sync_sockets[1], slave_fd, readonly_fs, no_new_privileges, additional_gids, additional_gids_count, readonly_paths,
-        readonly_paths_count, masked_paths, masked_paths_count, oom_score_adj, sysctl, sysctl_count, umask, devices, devices_count,
-        (uintptr_t)rootfs_path, disk_limit, (uintptr_t)seccomp_default_action, (uintptr_t)seccomp_default_errno, (uintptr_t)seccomp_syscalls, seccomp_syscalls_count,
-        (uintptr_t)seccomp_architectures, (uintptr_t)seccomp_architectures_count, (uintptr_t)mounts, mounts_count, (uintptr_t)hooks,
-        (uintptr_t)env_variables, env_variables_count, (uintptr_t)rlimits, rlimits_count
-    };
+    uintptr_t child_args[3] = { (uintptr_t)&config, sync_sockets[1], slave_fd };
     const pid_t child_pid = clone(container_runtime, child_stack + STACK_SIZE, config.namespaces | SIGCHLD, child_args);
 
     if (child_pid == -1) {
@@ -929,7 +784,7 @@ static int create_container(char *argv[], int argc) {
     }
 
     // create and assign cgroup
-    if (allocate_resources(child_pid, ram_limit, cpu_limit, config.pid_limit, config.devices, config.devices_count) < 0) {
+    if (allocate_resources(child_pid, config.ram_limit, config.cpu_limit, config.pid_limit, config.devices, config.devices_count) < 0) {
         fprintf(stderr, "allocate_resources\n");
 
         // kill child
@@ -943,9 +798,9 @@ static int create_container(char *argv[], int argc) {
     }
 
     // run createcruntime hooks
-    if (hooks && hooks->create_runtime_count > 0) {
-        for (int i = 0; i < hooks->create_runtime_count; i++) {
-            if (run_hook(&hooks->create_runtime[i]) != 0) {
+    if (config.hooks.create_runtime_count > 0) {
+        for (int i = 0; i < config.hooks.create_runtime_count; i++) {
+            if (run_hook(&config.hooks.create_runtime[i]) != 0) {
                 kill(child_pid, SIGKILL);
                 waitpid(child_pid, NULL, 0);
                 close(sync_sockets[0]);
@@ -1000,7 +855,7 @@ static int create_container(char *argv[], int argc) {
     }
 
     // send fds to container run process
-    if (shell_mode) {
+    if (config.shell_mode) {
         if (send_fd(start_fd, master_fd) < 0) {
             perror("send master_fd");
         }
@@ -1068,8 +923,7 @@ static int create_container(char *argv[], int argc) {
         }
     }
 
-    // clear environment variables and config
-    free(env_variables);
+    // clear config
     free_config(&config);
 
     fflush(stdout);
@@ -1111,6 +965,7 @@ static int start_container() {
     char shell_mode_path[512];
     snprintf(shell_mode_path, sizeof(shell_mode_path), "/tmp/runner-%s/shell-mode", container_name);
 
+    int shell_mode = 0;
     const int shell_mode_fd = open(shell_mode_path, O_RDONLY);
     if (shell_mode_fd != -1) {
         char shell_mode_value;
@@ -1196,7 +1051,6 @@ static int start_container() {
     if (notify_fd >= 0 && notify_fd > max_fd) {
         max_fd = notify_fd;
     }
-    ssize_t n;
 
     if (shell_mode && master_fd != -1) {
         if (master_fd > max_fd) {
@@ -1221,6 +1075,7 @@ static int start_container() {
     }
 
     if (max_fd >= 0) {
+        ssize_t n;
         while (1) {
             FD_ZERO(&fds);
 
